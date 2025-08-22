@@ -1,9 +1,3 @@
-
-
-
-
-
-
 /************
   CONSTANTES
 *************/
@@ -5093,4 +5087,5 @@ function __forceReapplyMaskNow__() {
   try { appliquerMasquageS1SurToutesFeuilles_(); } catch(_) {}
   try { SpreadsheetApp.flush(); } catch(_) {}
 }
+
 
