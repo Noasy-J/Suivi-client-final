@@ -112,6 +112,7 @@ function resurlignerApresMaj_(sheet) {
     if (isForecastEnabled_()) {
       clearPrevisionsSurFeuille_(sheet);
       appliquerPrevisionsSurFeuille_(sheet);
+      try { appliquerMasquageS1SurFeuIle_(sheet); } catch(_){}
     }
     SpreadsheetApp.flush();
   } catch (e) { Logger.log(e); }
@@ -182,6 +183,7 @@ function endHighlightBatch_() {
         if (isForecastEnabled_()) {
           clearPrevisionsSurFeuille_(sh);
           appliquerPrevisionsSurFeuille_(sh);
+          try { appliquerMasquageS1SurFeuIle_(sheet); } catch(_){}
         }
       } catch (e) { Logger.log(e); }
     });
@@ -228,6 +230,9 @@ function onOpen(e) {
         .addItem('Activer les prévisions ✅', 'activerPrevisionsMenu_')
         .addItem('Désactiver les prévisions ❌​', 'desactiverPrevisionsMenu_')
         .addItem('Listing téléphonique (priorisé) 📞', 'ouvrirListingPrevisionsDialog')
+        .addSeparator()
+        .addItem('Masquer un client 🕶️', 'masquerClientDialog')
+
         .addToUi();
 
       // 3) Cloture 🧾
@@ -1609,6 +1614,7 @@ function surlignerSemaineEnCoursToutesFeuilles_() {
     if (isForecastEnabled_()) {
       clearPrevisionsSurFeuille_(sh);
       appliquerPrevisionsSurFeuille_(sh);
+      try { appliquerMasquageS1SurFeuille_(sh); } catch(_){}
     }
   });
 }
@@ -4213,3 +4219,269 @@ function surlignerDoublonsClients_() {
 
   SpreadsheetApp.getActive().toast('Doublons surlignés (jaune)', 'Script', 5);
 }
+
+
+
+
+
+
+/************
+  MASQUAGE
+*************/
+
+
+/** ======== MASQUAGE : constantes & stockage ======== */
+const PROP_MASKED_CLIENTS_V2 = 'MASKED_CLIENTS_V2'; // stockage JSON DocumentProperties
+const MASK_BG_DARK = '#1F2937'; // gris très foncé (lisible)
+const MASK_FG_LIGHT = '#FFFFFF'; // texte clair pour contraste
+
+/** Clé de client stable : NOM|Prénom|TelDigits (TelDigits optionnel) */
+function makeClientKey_(nom, prenom, tel) {
+  const N = String(nom||'').trim().toUpperCase();
+  const P = String(prenom||'').trim();
+  const T = String(tel||'').replace(/\D/g,''); // digits only
+  return N + '|' + P + '|' + T;
+}
+
+/** Lecture du map des masqués : Map<key, untilEpochMs> (en purgeant ce qui a expiré) */
+function readMaskedMap_({purgeExpired=true}={}) {
+  const props = PropertiesService.getDocumentProperties();
+  const raw = props.getProperty(PROP_MASKED_CLIENTS_V2);
+  let obj = {};
+  try { obj = raw ? JSON.parse(raw) : {}; } catch(_) { obj = {}; }
+  // normaliser -> Map
+  const m = new Map();
+  Object.keys(obj).forEach(k => {
+    const v = Number(obj[k]||0) || 0;
+    m.set(k, v);
+  });
+  if (purgeExpired) purgeExpiredMasks_(m);
+  return m;
+}
+
+/** Écrit le map des masqués dans les propriétés */
+function saveMaskedMap_(map) {
+  const obj = {};
+  map.forEach((until,k)=>{ obj[k]=Number(until)||0; });
+  PropertiesService.getDocumentProperties().setProperty(PROP_MASKED_CLIENTS_V2, JSON.stringify(obj));
+}
+
+/** Supprime de la map tout masque expiré (<= aujourd'hui 23:59:59 local) */
+function purgeExpiredMasks_(map) {
+  const now = new Date(); // maintenant
+  const todayEnd = new Date(todayMidnight_().getTime() + 24*60*60*1000 - 1);
+  let changed = false;
+  Array.from(map.entries()).forEach(([k,until]) => {
+    if (!until || until <= todayEnd.getTime()) {
+      map.delete(k);
+      changed = true;
+    }
+  });
+  if (changed) saveMaskedMap_(map);
+}
+
+/** Renvoie un Set des clés masquées (déjà purgées) */
+function getMaskedKeysSet_() {
+  const m = readMaskedMap_({purgeExpired:true});
+  return new Set(Array.from(m.keys()));
+}
+
+
+/** ======== MASQUAGE : overlay S+1 sur une feuille ======== */
+function appliquerMasquageS1SurFeuille_(sheet) {
+  if (!sheet) return;
+  if (!isForecastEnabled_ || !isForecastEnabled_()) return; // masquage visible seulement si prévisions actives
+
+  // purge des expirés + set des clés masquées
+  const masked = getMaskedKeysSet_();
+  if (masked.size === 0) return;
+
+  // S+1 = colonne de début de la semaine suivante
+  const startCol = getNextWeekStartCol_(sheet);
+  if (!startCol || startCol < FIRST_DATA_COL) return;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < FIRST_DATA_ROW) return;
+
+  // Lecture minimale pour fabriquer les clés
+  // NOM (A, r1), PRÉNOM (A, r2), TÉL (COL_TEL, r2)
+  const height = lastRow - (FIRST_DATA_ROW - 1);
+  const A_nom   = sheet.getRange(FIRST_DATA_ROW, 1, height, 1).getDisplayValues(); // col A
+  const B_tel   = sheet.getRange(FIRST_DATA_ROW, COL_TEL, height, 1).getDisplayValues(); // col tel (B ou autre)
+
+  const a1List = [];
+  for (let r1 = FIRST_DATA_ROW; r1 + 1 <= lastRow; r1 += NB_ROWS_BLOCK) {
+    const nom    = (A_nom[r1 - FIRST_DATA_ROW][0] || '').trim();
+    const prenom = (A_nom[r1 - FIRST_DATA_ROW + 1]?.[0] || '').trim(); // ligne 2 (r1+1), même col A
+    const tel    = (B_tel[r1 - FIRST_DATA_ROW + 1]?.[0] || '').trim(); // ligne 2 (r1+1), col TEL
+    const key = makeClientKey_(nom, prenom, tel);
+    if (!masked.has(key)) continue;
+
+    // Plage S+1 du bloc (2 lignes, 1 colonne)
+    const rg = sheet.getRange(r1, startCol, NB_ROWS_BLOCK, 1);
+    a1List.push(rg.getA1Notation());
+  }
+
+  if (a1List.length) {
+    sheet.getRangeList(a1List).setBackground(MASK_BG_DARK).setFontColor(MASK_FG_LIGHT);
+  }
+}
+
+
+/** ======== MASQUAGE : services UI ======== */
+
+/** Liste pour UI : clients (non masqués) et masqués (avec échéance) */
+function uiListClientsPourMasquage_() {
+  const ss = SpreadsheetApp.getActive();
+  const feuilles = [SHEET_CLIENTS, SHEET_PONCTUEL];
+  const maskedMap = readMaskedMap_({purgeExpired:true});
+  const masked = new Set(Array.from(maskedMap.keys()));
+
+  const outClients = []; // {key,label}
+  const outMasked  = []; // {key,label, untilISO}
+
+  feuilles.forEach(n => {
+    const sh = ss.getSheetByName(n); if (!sh) return;
+    const last = sh.getLastRow(); if (last < FIRST_DATA_ROW) return;
+
+    const h = last - (FIRST_DATA_ROW - 1);
+    const A = sh.getRange(FIRST_DATA_ROW, 1, h, 1).getDisplayValues();            // NOM/PRÉNOM
+    const T = sh.getRange(FIRST_DATA_ROW, COL_TEL, h, 1).getDisplayValues();      // TÉL
+    for (let r1=FIRST_DATA_ROW; r1+1<=last; r1+=NB_ROWS_BLOCK) {
+      const nom    = (A[r1 - FIRST_DATA_ROW][0] || '').trim();
+      const prenom = (A[r1 - FIRST_DATA_ROW + 1]?.[0] || '').trim();
+      const tel    = (T[r1 - FIRST_DATA_ROW + 1]?.[0] || '').trim();
+      const key = makeClientKey_(nom, prenom, tel);
+      if (!nom && !prenom) continue;
+
+      const label = `${nom || '(Sans NOM)'} ${prenom || ''}`.trim() + ` — ${n}`;
+      if (masked.has(key)) {
+        const until = maskedMap.get(key) || 0;
+        const untilISO = until ? Utilities.formatDate(new Date(until), Session.getScriptTimeZone() || 'Europe/Paris', 'yyyy-MM-dd') : '';
+        outMasked.push({key, label, untilISO});
+      } else {
+        outClients.push({key, label});
+      }
+    }
+  });
+
+  // Tri alpha
+  outClients.sort((a,b)=>a.label.localeCompare(b.label, 'fr'));
+  outMasked.sort((a,b)=>a.label.localeCompare(b.label, 'fr'));
+  return {clients: outClients, masked: outMasked};
+}
+
+/** Calcule la prochaine date d’intervention planifiée (si existante) pour un client (clé) */
+function uiComputeNextPlanifDate_(key) {
+  const loc = findBlockByKeyAcrossSheets_(key);
+  if (!loc) return { ok:false, message:'Client introuvable' };
+  const { sheet, r1 } = loc;
+
+  // Besoin des plages (une par semaine)
+  const cache = getPlagesCachedForSheet_(sheet);
+  const plages = cache && cache.plages; if (!plages || !plages.length) return {ok:false, message:'Plages non disponibles'};
+
+  // On lit l’affichage sur la ligne 1 et 2 pour détecter une planif future
+  const lastCol = sheet.getLastColumn();
+  const width = lastCol - (FIRST_DATA_COL - 1);
+  if (width <= 0) return {ok:false, message:'Aucune colonne de données'};
+  const rowDisp = sheet.getRange(r1, FIRST_DATA_COL, NB_ROWS_BLOCK, width).getDisplayValues();
+  const row1 = rowDisp[0], row2 = rowDisp[1];
+
+  // Semaine courante + 1
+  const startCol = getNextWeekStartCol_(sheet);
+  const jStart = startCol - FIRST_DATA_COL;
+
+  // Cherche la première colonne >= S+1 où l’une des 2 lignes est non vide
+  for (let j=jStart; j<width && j<plages.length; j++) {
+    const v1 = String(row1[j]||'').trim();
+    const v2 = String(row2[j]||'').trim();
+    if (v1 !== '' || v2 !== '') {
+      const d = plages[j].start; // Date JS
+      const iso = Utilities.formatDate(new Date(d), Session.getScriptTimeZone()||'Europe/Paris', 'yyyy-MM-dd');
+      return {ok:true, dateISO: iso};
+    }
+  }
+  return {ok:false, message:'Aucune planification future trouvée'};
+}
+
+/** Masque un client jusqu’à une date (ISO) OU jusqu’à la prochaine planif */
+function uiMaskClient_(payload) {
+  const { key, mode, dateISO } = payload || {};
+  if (!key) return {ok:false, message:'Aucun client sélectionné'};
+  const map = readMaskedMap_({purgeExpired:true});
+  let untilMs = 0;
+
+  if (mode === 'date') {
+    if (!dateISO) return {ok:false, message:'Date manquante'};
+    // jusqu’à 23:59:59 local de la date choisie
+    const tz = Session.getScriptTimeZone() || 'Europe/Paris';
+    const [y,m,d] = dateISO.split('-').map(n=>parseInt(n,10));
+    untilMs = new Date(y, m-1, d, 23,59,59,999).getTime();
+  } else if (mode === 'next') {
+    const r = uiComputeNextPlanifDate_(key);
+    if (!r.ok) return r;
+    const [y,m,d] = r.dateISO.split('-').map(n=>parseInt(n,10));
+    // On masque jusqu’à la veille (23:59) de cette date de planif ou jusqu’à cette date ? 
+    // Choix user-friendly : jusqu’à la veille -> la S+1 avant cette date sera grisée, et dès la semaine de la date, ça redevient normal.
+    untilMs = new Date(y, m-1, d, 0,0,0,0).getTime() - 1;
+  } else {
+    return {ok:false, message:'Mode invalide'};
+  }
+
+  map.set(key, untilMs);
+  saveMaskedMap_(map);
+
+  // Repeindre S+1 (les 2 feuilles) si prévisions actives
+  try { surlignerSemaineEnCoursToutesFeuilles_(); } catch(_){}
+  return {ok:true, data: uiListClientsPourMasquage_()};
+}
+
+/** Démasque un client (suppression) */
+function uiUnmaskClient_(key) {
+  const map = readMaskedMap_({purgeExpired:false});
+  map.delete(key);
+  saveMaskedMap_(map);
+  try { surlignerSemaineEnCoursToutesFeuilles_(); } catch(_){}
+  return {ok:true, data: uiListClientsPourMasquage_()};
+}
+
+/** Localise un bloc par clé (sur l’une des 2 feuilles) */
+function findBlockByKeyAcrossSheets_(key) {
+  const ss = SpreadsheetApp.getActive();
+  const feuilles = [SHEET_CLIENTS, SHEET_PONCTUEL];
+  for (const n of feuilles) {
+    const sh = ss.getSheetByName(n); if (!sh) continue;
+    const last = sh.getLastRow(); if (last < FIRST_DATA_ROW) continue;
+    const h = last - (FIRST_DATA_ROW - 1);
+    const A = sh.getRange(FIRST_DATA_ROW, 1, h, 1).getDisplayValues();
+    const T = sh.getRange(FIRST_DATA_ROW, COL_TEL, h, 1).getDisplayValues();
+    for (let r1=FIRST_DATA_ROW; r1+1<=last; r1+=NB_ROWS_BLOCK) {
+      const nom    = (A[r1 - FIRST_DATA_ROW][0] || '').trim();
+      const prenom = (A[r1 - FIRST_DATA_ROW + 1]?.[0] || '').trim();
+      const tel    = (T[r1 - FIRST_DATA_ROW + 1]?.[0] || '').trim();
+      const k = makeClientKey_(nom, prenom, tel);
+      if (k === key) return {sheet: sh, r1};
+    }
+  }
+  return null;
+}
+
+function masquerClientDialog() {
+  const html = HtmlService.createHtmlOutputFromFile('masquerClient')
+    .setWidth(520).setHeight(420);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Masquer un client');
+}
+
+function refreshWeekHighlightDaily_() {
+  try {
+    // purge puis repaint
+    readMaskedMap_({purgeExpired:true}); // purgera et sauvegardera si nécessaire
+    surlignerSemaineEnCoursToutesFeuilles_();
+    try { focusHighlightedWeekAtOpen_(); } catch(_){}
+  } catch(e) { Logger.log(e); }
+}
+
+
+
+
