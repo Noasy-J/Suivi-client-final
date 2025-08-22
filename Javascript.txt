@@ -191,16 +191,14 @@ function endHighlightBatch_() {
         if (isForecastEnabled_()) {
           clearPrevisionsSurFeuille_(sh);
           appliquerPrevisionsSurFeuille_(sh);
-          try { appliquerMasquageS1SurFeuille_(sheet /* ou sh */); } catch(_) {}
+          try { appliquerMasquageS1SurFeuille_(sh); } catch(_){}
 
-
-          // ✅ AJOUT : griser S+1 pour les clients masqués
-          try { appliquerMasquageS1SurFeuille_(sh); } catch(_) {}
         }
       } catch (e) { Logger.log(e); }
     });
 
     SpreadsheetApp.flush();
+    __forceReapplyMaskNow__();
   } finally {
     __HL_DEFER = false;
     __HL_BUCKET = null;
@@ -240,6 +238,7 @@ function onOpen(e) {
       // 2) Prévisions 🔮 (— plus de sous-menu Masquages —)
       ui.createMenu('Prévisions 🔮')
         .addItem('Activer les prévisions ✅', 'activerPrevisionsMenu_')
+        .addItem('Désactiver les prévisions', 'desactiverPrevisions_')
         .addItem('Désactiver les prévisions ❌​', 'desactiverPrevisionsMenu_')
         .addItem('Listing téléphonique (priorisé) 📞', 'ouvrirListingPrevisionsDialog')
         .addSeparator()
@@ -1618,24 +1617,19 @@ function todayMidnight_() {
 
 function surlignerSemaineEnCoursToutesFeuilles_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const today = todayMidnight_();
+  const today = (typeof todayMidnight_ === 'function') ? todayMidnight_() : new Date(new Date().setHours(0,0,0,0));
 
   [SHEET_CLIENTS, SHEET_PONCTUEL].forEach(name => {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
 
-    // Surbrillance de la semaine
-    mettreEnValeurColonneJourSurFeuille_(sh, today);
+    try { mettreEnValeurColonneJourSurFeuille_(sh, today); } catch(_){}
 
-    // Prévisions
-    if (isForecastEnabled_()) {
-      clearPrevisionsSurFeuille_(sh);
-      appliquerPrevisionsSurFeuille_(sh);
-      try { appliquerMasquageS1SurFeuille_(sheet /* ou sh */); } catch(_) {}
-
-
-      // ✅ AJOUT : griser S+1 pour les clients masqués
-      try { appliquerMasquageS1SurFeuille_(sh); } catch(_) {}
+    if (typeof isForecastEnabled_ === 'function' && isForecastEnabled_()) {
+      try { clearPrevisionsSurFeuille_(sh); } catch(_){}
+      try { appliquerPrevisionsSurFeuille_(sh); } catch(_){}
+      try { appliquerMasquageS1SurFeuille_(sh); } catch(_){}   // <= GRIS ICI AUSSI
+      __forceReapplyMaskNow__();
     }
   });
 }
@@ -3224,11 +3218,7 @@ function ouvrirListingPrevisionsDialog() {
 function getListingPrevisionsData_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const groups = {
-    'Extrême': [],
-    'Élevé': [],
-    'Moyenne': [],
-    'Faible': [],
-    'Non prioritaire': []
+    'Extrême': [], 'Élevé': [], 'Moyenne': [], 'Faible': [], 'Non prioritaire': []
   };
 
   const sheet = ss.getSheetByName(SHEET_CLIENTS);
@@ -3241,7 +3231,7 @@ function getListingPrevisionsData_() {
   const height = lastRow - (FIRST_DATA_ROW - 1);
   const width  = lastCol - (FIRST_DATA_COL - 1);
 
-  const ABdisp     = sheet.getRange(FIRST_DATA_ROW, 1, height, 2).getDisplayValues();
+  const ABdisp     = sheet.getRange(FIRST_DATA_ROW, 1,            height, 2     ).getDisplayValues();
   const rowValsAll = sheet.getRange(FIRST_DATA_ROW, FIRST_DATA_COL, height, width).getValues();
   const rowDispAll = sheet.getRange(FIRST_DATA_ROW, FIRST_DATA_COL, height, width).getDisplayValues();
 
@@ -3264,18 +3254,27 @@ function getListingPrevisionsData_() {
     });
   };
 
+  // 🔒 Récupérer les clients MASQUÉS pour les exclure
+  const maskedSet = getMaskedKeysSet_();
+
   for (let r1rel = 0; r1rel < height; r1rel += NB_ROWS_BLOCK) {
     const r2rel = r1rel + 1; if (r2rel >= height) break;
 
     const nom    = (ABdisp[r1rel][0] || '').trim();
     const prenom = (ABdisp[r2rel][0] || '').trim();
-    if (!nom) continue;
+    if (!nom && !prenom) continue;
 
     const contrat = (ABdisp[r1rel][1] || '').trim();
     const telRaw  = (ABdisp[r2rel][1] || '').trim();
     const tel     = normalizePhoneForListing_(telRaw);
     const rank    = contratOrderRank_(contrat);
     const freq    = getFrequenceFromContrat_(contrat);
+
+    // ⛔️ EXCLUSION MASQUÉS : clé stable = Nom|Prénom|TelDigits (on utilise tel brut pour la clé)
+    const key = (typeof makeClientKey_ === 'function')
+      ? makeClientKey_(nom, prenom, telRaw)
+      : (String(nom).toUpperCase() + '|' + String(prenom) + '|' + String(telRaw).replace(/\D/g,''));
+    if (maskedSet.has(key)) continue;
 
     const row1Vals = rowValsAll[r1rel];
     const row1Disp = rowDispAll[r1rel];
@@ -3297,10 +3296,10 @@ function getListingPrevisionsData_() {
     const infoLast = getLastInterventionConsideringCurrentWeek_(plages, row1Vals, row1Disp, row2Disp);
     const lastDate = infoLast ? infoLast.date : null;
 
-    // NOUVEAU CLIENT : BLEU si aucune planification à partir de S+1
+    // NOUVEAU CLIENT
     if (!lastDate) {
       const hasFuturePlanif = hasPlanifFromIndex_(row1Disp, row2Disp, jS1);
-      if (hasFuturePlanif) { // déjà programmé → non prioritaire
+      if (hasFuturePlanif) {
         pushNonPrio(groups['Non prioritaire'], nom, prenom, contrat, tel, null, rank, nextPlanifDate);
       } else {
         groups['Extrême'].push({
@@ -3313,7 +3312,7 @@ function getListingPrevisionsData_() {
       continue;
     }
 
-    // Autres cas : prioritaire UNIQUEMENT si dueDate ≤ fin de S+1
+    // Cas généraux : dueDate ≤ fin de S+1
     let dueDate = null;
     if      (freq === 'WEEKLY')   dueDate = addDays_(lastDate, 7);
     else if (freq === 'BIWEEKLY') dueDate = addDays_(lastDate, 14);
@@ -3322,12 +3321,12 @@ function getListingPrevisionsData_() {
 
     let color, weeksBehind = 0;
     const dueIdx = findColumnIndexForDate_(plages, dueDate);
-    if (dueIdx >= 0) {
-      weeksBehind = Math.max(0, jS1 - dueIdx);
-    } else {
+    if (dueIdx >= 0) weeksBehind = Math.max(0, jS1 - dueIdx);
+    else {
       const ms = 24*60*60*1000;
       weeksBehind = Math.max(0, Math.floor((s1Plage.start - dueDate) / ms / 7));
     }
+
     if (weeksBehind >= 2)      color = FORECAST_BG_URGENT;
     else if (weeksBehind === 1) color = FORECAST_BG;
     else                        color = FORECAST_BG_OK;
@@ -3341,7 +3340,7 @@ function getListingPrevisionsData_() {
     });
   }
 
-  // Tri par rang puis A→Z
+  // Tri : rang puis A→Z
   Object.keys(groups).forEach(k => {
     groups[k].sort((a, b) =>
       (a.rank - b.rank) ||
@@ -3353,6 +3352,7 @@ function getListingPrevisionsData_() {
   const total = Object.values(groups).reduce((acc, arr) => acc + arr.length, 0);
   return { groups, total };
 }
+
 
 
 
@@ -4613,7 +4613,10 @@ if (typeof saveMaskedMap_ !== 'function') {
 
 if (typeof getMaskedKeysSet_ !== 'function') {
   function getMaskedKeysSet_() {
-    return new Set(Array.from(readMaskedMap_({purgeExpired:true}).keys()));
+    try {
+      const map = (typeof readMaskedMap_ === 'function') ? readMaskedMap_({purgeExpired:true}) : new Map();
+      return new Set(Array.from(map.keys()));
+    } catch (_) { return new Set(); }
   }
 }
 
@@ -4943,4 +4946,151 @@ function menuActiverPrevisions_v2() {
   repaintForecastAndMasksAll_();
 }
 
+
+
+/** Repeint 1 feuille : surbrillance semaine, prévisions, puis GRIS S+1 pour masqués */
+function __repaintFeuilleAvecMasque__(sheet) {
+  if (!sheet) return;
+  const today = (typeof todayMidnight_ === 'function') ? todayMidnight_() : new Date(new Date().setHours(0,0,0,0));
+  try { mettreEnValeurColonneJourSurFeuille_(sheet, today); } catch(_){}
+
+  if (typeof isForecastEnabled_ === 'function' && isForecastEnabled_()) {
+    try { clearPrevisionsSurFeuille_(sheet); } catch(_){}
+    try { appliquerPrevisionsSurFeuille_(sheet); } catch(_){}
+    try { appliquerMasquageS1SurFeuille_(sheet); } catch(_){}   // <= GRIS ICI
+  }
+}
+
+/** Repeint les 2 feuilles connues */
+function __repaintToutAvecMasque__() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  [SHEET_CLIENTS, SHEET_PONCTUEL].forEach(n => {
+    const sh = ss.getSheetByName(n);
+    if (sh) __repaintFeuilleAvecMasque__(sh);
+  });
+  SpreadsheetApp.flush();
+}
+
+/** 👉 À appeler pour “Activer les prévisions” (met le flag ON + repaint + gris masqués immédiat) */
+function activerPrevisionsEtRepaintMaintenant_() {
+  // Mets ton flag "prévisions actives" à ON (adapte si ton setter s’appelle autrement)
+  if (typeof setForecastEnabled_ === 'function') {
+    setForecastEnabled_(true);
+  } else {
+    // fallback simple si pas de setter dédié
+    PropertiesService.getDocumentProperties().setProperty('FORECAST_ENABLED', '1');
+  }
+  __repaintToutAvecMasque__();
+}
+
+
+function __setForecastON__() {
+  if (typeof setForecastEnabled_ === 'function') {
+    setForecastEnabled_(true);
+  } else {
+    PropertiesService.getDocumentProperties().setProperty('FORECAST_ENABLED', '1');
+  }
+}
+
+/* ALIAS 1 */
+function activerPrevisions_() {
+  __setForecastON__();
+  __repaintToutAvecMasque__();
+}
+
+/* ALIAS 2 */
+function menuActiverPrevisions_() {
+  __setForecastON__();
+  __repaintToutAvecMasque__();
+}
+
+/* ALIAS 3 */
+function activerPrevisions() {
+  __setForecastON__();
+  __repaintToutAvecMasque__();
+}
+
+/** Couleur "gris très foncé" pour S+1 des clients masqués (fallback si constante absente) */
+var FORECAST_BG_MASKED = (typeof FORECAST_BG_MASKED === 'string') ? FORECAST_BG_MASKED : '#111827';
+
+/** Applique le GRIS sur la colonne S+1 pour tous les clients MASQUÉS de la feuille donnée. */
+function appliquerMasquageS1SurFeuille_(sheet) {
+  if (!sheet) return;
+
+  // Fallbacks de structure
+  const FIRST_ROW   = (typeof FIRST_DATA_ROW  === 'number') ? FIRST_DATA_ROW  : 3;   // début des blocs
+  const BLOCK_ROWS  = (typeof NB_ROWS_BLOCK   === 'number') ? NB_ROWS_BLOCK   : 2;   // 2 lignes par client
+  const COL_TEL_IDX = (typeof COL_TEL         === 'number') ? COL_TEL         : 2;   // tel sur la 2e ligne du bloc
+  const FIRST_DATA  = (typeof FIRST_DATA_COL  === 'number') ? FIRST_DATA_COL  : 3;   // 1ère colonne de planning
+
+  // S+1 (colonne à peindre)
+  let startCol = FIRST_DATA;
+  try {
+    if (typeof getNextWeekStartCol_ === 'function') startCol = Math.max(FIRST_DATA, getNextWeekStartCol_(sheet));
+  } catch (_) {}
+  const lastCol = sheet.getLastColumn();
+  if (startCol > lastCol) return; // rien à peindre
+
+  // Liste des clients masqués
+  const maskedMap = (typeof readMaskedMap_ === 'function') ? readMaskedMap_({purgeExpired:true}) : new Map();
+  if (!maskedMap || maskedMap.size === 0) return;
+  const maskedSet = new Set(Array.from(maskedMap.keys()));
+
+  // Lecture rapide des colonnes A (nom/prénom) et B (tel) pour tous les blocs
+  const lastRow = sheet.getLastRow();
+  if (lastRow < FIRST_ROW + 1) return;
+
+  const h  = lastRow - (FIRST_ROW - 1);
+  const colA = sheet.getRange(FIRST_ROW, 1,           h, 1).getDisplayValues();      // noms/prénoms
+  const colB = sheet.getRange(FIRST_ROW, COL_TEL_IDX, h, 1).getDisplayValues();      // contrat/tel
+
+  // Regrouper les A1 notations à peindre par lots (plus rapide)
+  const a1ToPaint = [];
+  for (let r1 = FIRST_ROW; r1 + 1 <= lastRow; r1 += BLOCK_ROWS) {
+    const nom    = String(colA[r1 - FIRST_ROW]?.[0] || '').trim();
+    const prenom = String(colA[r1 - FIRST_ROW + 1]?.[0] || '').trim();
+    const telRaw = String(colB[r1 - FIRST_ROW + 1]?.[0] || '').trim();
+
+    if (!nom && !prenom) continue;
+
+    const key = (typeof makeClientKey_ === 'function')
+      ? makeClientKey_(nom, prenom, telRaw)
+      : (nom.toUpperCase() + '|' + prenom + '|' + telRaw.replace(/\D/g,''));
+
+    if (!maskedSet.has(key)) continue;
+
+    // Plage S+1 du bloc (2 lignes, 1 colonne)
+    const range = sheet.getRange(r1, startCol, BLOCK_ROWS, 1);
+    a1ToPaint.push(range.getA1Notation());
+  }
+
+  // Applique le gris sur toutes les plages trouvées
+  if (a1ToPaint.length) {
+    // Par lots pour éviter les limites d’exécution
+    const CHUNK = 50;
+    for (let i = 0; i < a1ToPaint.length; i += CHUNK) {
+      const slice = a1ToPaint.slice(i, i + CHUNK);
+      sheet.getRangeList(slice).setBackground(FORECAST_BG_MASKED);
+    }
+  }
+  SpreadsheetApp.flush();
+}
+
+/** Option pratique : appliquer le masquage sur les 2 feuilles en une fois. */
+function appliquerMasquageS1SurToutesFeuilles_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  [SHEET_CLIENTS, SHEET_PONCTUEL].forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (sh) try { appliquerMasquageS1SurFeuille_(sh); } catch(_) {}
+  });
+}
+
+
+/** Force le gris S+1 des clients masqués après les prévisions (anti-écrasement). */
+function __forceReapplyMaskNow__() {
+  try { SpreadsheetApp.flush(); } catch(_) {}
+  try { Utilities.sleep(120); } catch(_) {}   // laisse finir les lots de peinture
+  try { appliquerMasquageS1SurToutesFeuilles_(); } catch(_) {}
+  try { SpreadsheetApp.flush(); } catch(_) {}
+}
 
