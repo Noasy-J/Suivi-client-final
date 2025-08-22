@@ -114,7 +114,6 @@ function resurlignerApresMaj_(sheet) {
       appliquerPrevisionsSurFeuille_(sheet);
       try { appliquerMasquageS1SurFeuille_(sheet /* ou sh */); } catch(_) {}
 
-      try { appliquerMasquageS1SurFeuIle_(sheet); } catch(_){}
     }
     SpreadsheetApp.flush();
   } catch (e) { Logger.log(e); }
@@ -2229,7 +2228,7 @@ function appliquerPrevisionsToutesFeuilles_() {
     // on ne re-surligne pas la semaine ici : inutile et coûteux
     clearPrevisionsSurFeuille_(sh);
     appliquerPrevisionsSurFeuille_(sh);
-    try { appliquerMasquageS1SurFeuille_(sheet /* ou sh */); } catch(_) {}
+try { appliquerMasquageS1SurFeuille_(sh); } catch(_) {}
 
   });
 }
@@ -4283,38 +4282,7 @@ function getMaskedKeysSet_() {
   return new Set(Array.from(readMaskedMap_({purgeExpired:true}).keys()));
 }
 
-/***** ======== MASQUAGE : overlay S+1 (gris foncé) ======== *****/
-function appliquerMasquageS1SurFeuille_(sheet) {
-  if (!sheet) return;
-  if (!(typeof isForecastEnabled_ === 'function' && isForecastEnabled_())) return; // visible seulement si prévisions actives
-  const masked = getMaskedKeysSet_();
-  if (masked.size === 0) return;
 
-  const startCol = getNextWeekStartCol_(sheet);
-  if (!startCol || startCol < FIRST_DATA_COL) return;
-
-  const lastRow = sheet.getLastRow();
-  if (lastRow < FIRST_DATA_ROW) return;
-
-  const height = lastRow - (FIRST_DATA_ROW - 1);
-  const A_nom  = sheet.getRange(FIRST_DATA_ROW, 1,       height, 1).getDisplayValues(); // NOM/PRÉNOM (col A)
-  const T_tel  = sheet.getRange(FIRST_DATA_ROW, COL_TEL, height, 1).getDisplayValues(); // Tél (col B normalement)
-
-  const a1List = [];
-  for (let r1 = FIRST_DATA_ROW; r1 + 1 <= lastRow; r1 += NB_ROWS_BLOCK) {
-    const nom    = (A_nom[r1 - FIRST_DATA_ROW]?.[0] || '').trim();
-    const prenom = (A_nom[r1 - FIRST_DATA_ROW + 1]?.[0] || '').trim();
-    const tel    = (T_tel[r1 - FIRST_DATA_ROW + 1]?.[0] || '').trim();
-    if (!nom && !prenom) continue;
-    const key = makeClientKey_(nom, prenom, tel);
-    if (!masked.has(key)) continue;
-
-    a1List.push(sheet.getRange(r1, startCol, NB_ROWS_BLOCK, 1).getA1Notation());
-  }
-  if (a1List.length) sheet.getRangeList(a1List).setBackground(MASK_BG_DARK).setFontColor(MASK_FG_LIGHT);
-}
-
-/***** ======== MASQUAGE : services pour l’UI ======== *****/
 
 /** Liste pour UI : clients par feuille + liste des masqués (label + date) */
 /** Clients pour la boîte "Masquer un client"
@@ -5086,6 +5054,92 @@ function __forceReapplyMaskNow__() {
   try { Utilities.sleep(120); } catch(_) {}   // laisse finir les lots de peinture
   try { appliquerMasquageS1SurToutesFeuilles_(); } catch(_) {}
   try { SpreadsheetApp.flush(); } catch(_) {}
+}
+
+
+
+/** ========== AUTOPILOTE : Gris S+1 des clients masqués ========== */
+
+// Détecte si les prévisions sont actives (compatible avec/ sans ta fonction).
+function __autoMask_isEnabled__() {
+  try { if (typeof isForecastEnabled_ === 'function') return !!isForecastEnabled_(); } catch(_) {}
+  try {
+    const v = PropertiesService.getDocumentProperties().getProperty('FORECAST_ENABLED');
+    return String(v) === '1';
+  } catch(_) { return true; } // on préfère appliquer que rien faire
+}
+
+// Applique le gris maintenant sur toutes les feuilles (en dernier, anti-écrasement).
+function __autoMask_applyNow__() {
+  try { SpreadsheetApp.flush(); } catch(_){}
+  try { Utilities.sleep(120); } catch(_) {}
+  try {
+    if (typeof appliquerMasquageS1SurToutesFeuilles_ === 'function') {
+      appliquerMasquageS1SurToutesFeuilles_();
+    } else if (typeof appliquerMasquageS1SurFeuille_ === 'function') {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      [typeof SHEET_CLIENTS==='string'?SHEET_CLIENTS:'Client Régulier',
+       typeof SHEET_PONCTUEL==='string'?SHEET_PONCTUEL:'Client Ponctuel'].forEach(n=>{
+        const sh = ss.getSheetByName(n); if (sh) appliquerMasquageS1SurFeuille_(sh);
+      });
+    }
+  } catch(e){ Logger.log(e); }
+  try { SpreadsheetApp.flush(); } catch(_){}
+}
+
+// Handler commun des triggers : si prévisions ON → applique le gris.
+function AutoMasquageS1_Handler_() {
+  try { if (__autoMask_isEnabled__()) __autoMask_applyNow__(); } catch(e){ Logger.log(e); }
+}
+
+// (Optionnel) tick régulier au cas où un autre script recolorie après nous.
+function AutoMasquageS1_Cron_() { AutoMasquageS1_Handler_(); }
+
+// Installe les triggers (à lancer UNE FOIS depuis l’éditeur).
+function InstallerAutoMasquageS1_() {
+  // Nettoyage des anciens triggers auto-masque
+  ScriptApp.getProjectTriggers().forEach(t => {
+    const h = t.getHandlerFunction();
+    if (h === 'AutoMasquageS1_Handler_' || h === 'AutoMasquageS1_Cron_') {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+
+  const ss = SpreadsheetApp.getActive();
+
+  // 1) À l’ouverture du fichier
+  ScriptApp.newTrigger('AutoMasquageS1_Handler_')
+    .forSpreadsheet(ss)
+    .onOpen()
+    .create();
+
+  // 2) À chaque édition (saisie, collage…)
+  ScriptApp.newTrigger('AutoMasquageS1_Handler_')
+    .forSpreadsheet(ss)
+    .onEdit()
+    .create();
+
+  // 3) Sur changements structurels (ajout feuille, import, etc.)
+  ScriptApp.newTrigger('AutoMasquageS1_Handler_')
+    .forSpreadsheet(ss)
+    .onChange()
+    .create();
+
+  // 4) Filet de sécurité : toutes les 2 minutes
+  ScriptApp.newTrigger('AutoMasquageS1_Cron_')
+    .timeBased()
+    .everyMinutes(2)
+    .create();
+}
+
+// Désinstalle proprement (si un jour tu veux enlever l’autopilote)
+function DesinstallerAutoMasquageS1_() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    const h = t.getHandlerFunction();
+    if (h === 'AutoMasquageS1_Handler_' || h === 'AutoMasquageS1_Cron_') {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
 }
 
 
