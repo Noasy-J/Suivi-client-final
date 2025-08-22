@@ -242,6 +242,7 @@ function onOpen(e) {
         .addItem('Resynchroniser les templates 🎨', 'resynchroniserTemplatesMenu')
         .addItem('Reposer validations "Statut" ✅', 'resynchroniserValidationsStatutDepuisTemplate')
         .addItem('Recalculer validations (dates) ✅', 'recalculerValidationsDepuisMenu')
+        .addItem('Réparer tout (surbrillance, prévisions, MFC)', 'reparerTout_')
         .addSeparator()
         .addSubMenu(
           ui.createMenu('Automatisation ⚙️')
@@ -349,15 +350,21 @@ function onOpenInstallable_(e) {
 
 
 function setupTriggersDaily_() {
-  removeTriggersByHandler_('refreshWeekHighlightDaily_');
-  ScriptApp.newTrigger('refreshWeekHighlightDaily_')
-    .timeBased().everyDays(1).atHour(6).create();
-  SpreadsheetApp.getActive().toast('Rafraîchissement quotidien activé (6h) ✅');
+  const ssId = SpreadsheetApp.getActive().getId();
+  // Supprime l'ancien s’il existe
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'refreshWeekHighlightDaily_') ScriptApp.deleteTrigger(t);
+  });
+  // Recrée une fois
+  ScriptApp.newTrigger('refreshWeekHighlightDaily_').timeBased().atHour(6).everyDays(1).create();
 }
+
 function disableDailyTrigger_() {
-  const removed = removeTriggersByHandler_('refreshWeekHighlightDaily_');
-  SpreadsheetApp.getActive().toast(removed ? 'Rafraîchissement quotidien désactivé ✅' : 'Aucun déclencheur quotidien.');
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'refreshWeekHighlightDaily_') ScriptApp.deleteTrigger(t);
+  });
 }
+
 function refreshWeekHighlightDaily_() {
   try { surlignerSemaineEnCoursToutesFeuilles_(); } catch (err) { Logger.log(err); }
 }
@@ -1582,11 +1589,14 @@ function appliquerValidationDatesPourBloc_(sheet, row1) {
   SURBRILLANCE – Semaine en cours (bleue)
 *************/
 function todayMidnight_() {
-  const y = parseInt(Utilities.formatDate(new Date(), TZ, 'yyyy'), 10);
-  const m = parseInt(Utilities.formatDate(new Date(), TZ, 'MM'), 10) - 1;
-  const d = parseInt(Utilities.formatDate(new Date(), TZ, 'dd'), 10);
-  return new Date(y, m, d);
+  const tz = Session.getScriptTimeZone() || 'Europe/Paris';
+  const now = new Date();
+  const y = Utilities.formatDate(now, tz, 'yyyy');
+  const m = Utilities.formatDate(now, tz, 'MM');
+  const d = Utilities.formatDate(now, tz, 'dd');
+  return new Date(Number(y), Number(m)-1, Number(d), 0, 0, 0, 0);
 }
+
 
 
 function surlignerSemaineEnCoursToutesFeuilles_() {
@@ -4091,3 +4101,115 @@ function InstallerMiseEnRougeChampsVides() {
 }
 
 
+function reparerTout_() {
+  const ss = SpreadsheetApp.getActive();
+  const props = PropertiesService.getDocumentProperties();
+  const feuilles = [SHEET_CLIENTS, SHEET_PONCTUEL];
+
+  // 1) Invalider le cache de surbrillance
+  feuilles.forEach(n => {
+    const sh = ss.getSheetByName(n); if (!sh) return;
+    const sid = sh.getSheetId();
+    props.deleteProperty(PROP_WEEK_LAST_ROWS_PREFIX + sid);
+    props.deleteProperty(PROP_WEEK_BORDER_COLS_PREFIX + '_' + sid);
+  });
+
+  // 2) Repeindre semaine + prévisions éventuelles
+  if (typeof surlignerSemaineEnCoursToutesFeuilles_ === 'function') {
+    surlignerSemaineEnCoursToutesFeuilles_();
+  }
+
+  // 3) Reposer les validations (si tes fonctions existent)
+  try { if (typeof resynchroniserValidationsStatutDepuisTemplate === 'function') resynchroniserValidationsStatutDepuisTemplate(); } catch(_){}
+  try { if (typeof recalculerValidationsDepuisMenu === 'function') recalculerValidationsDepuisMenu(); } catch(_){}
+
+  // 4) Reposer la MFC "champs vides en rouge" (si tu l’utilises)
+  try { if (typeof InstallerMiseEnRougeChampsVides === 'function') InstallerMiseEnRougeChampsVides(); } catch(_){}
+  try { SpreadsheetApp.getActiveSpreadsheet().toast('Réparation terminée ✅', 'Script', 5); } catch(_){}
+}
+
+
+function invalidateHighlightCacheForSheet_(sheet) {
+  if (!sheet) return;
+  const props = PropertiesService.getDocumentProperties();
+  const sid = sheet.getSheetId();
+  props.deleteProperty(PROP_WEEK_LAST_ROWS_PREFIX + sid);
+  props.deleteProperty(PROP_WEEK_BORDER_COLS_PREFIX + '_' + sid);
+}
+
+function normaliserTelFR_(raw) {
+  if (raw == null) return '';
+  let s = String(raw).replace(/[^\d+]/g, '').trim();
+
+  // +33 → 0
+  if (s.startsWith('+33')) s = '0' + s.slice(3);
+  // 0033 → 0
+  if (s.startsWith('0033')) s = '0' + s.slice(4);
+
+  // Garder 10 chiffres (FR) si possible
+  const digits = s.replace(/\D/g, '');
+  if (digits.length === 9 && !digits.startsWith('0')) s = '0' + digits;
+  else if (digits.length === 10) s = digits;
+  else return raw.toString(); // ne force pas si autre format (DOM/TOM, pro, etc.)
+
+  // Mise en forme 0X XX XX XX XX
+  return s.replace(/^(\d)(\d{1})(\d{2})(\d{2})(\d{2})(\d{2})$/, '$1$2 $3 $4 $5 $6');
+}
+
+
+function normaliserTelephonesToutesFeuilles() {
+  const ss = SpreadsheetApp.getActive();
+  [SHEET_CLIENTS, SHEET_PONCTUEL].forEach(n => {
+    const sh = ss.getSheetByName(n); if (!sh) return;
+    const last = sh.getLastRow(); if (last < 3) return;
+    const rg = sh.getRange(3, COL_TEL, last-2, 1);
+    const vals = rg.getValues();
+    let changed = false;
+    for (let i=0; i<vals.length; i++) {
+      const v = vals[i][0];
+      const nv = normaliserTelFR_(v);
+      if (nv !== v) { vals[i][0] = nv; changed = true; }
+    }
+    if (changed) rg.setValues(vals);
+  });
+}
+
+
+function surlignerDoublonsClients_() {
+  const ss = SpreadsheetApp.getActive();
+  const feuilles = [SHEET_CLIENTS, SHEET_PONCTUEL];
+  const clés = new Map(); // "NOM|Prénom" -> [ {sheet, row1} ]
+
+  feuilles.forEach(n => {
+    const sh = ss.getSheetByName(n); if (!sh) return;
+    const last = sh.getLastRow(); if (last < 4) return;
+    const A = sh.getRange(3, 1, last-2, 1).getDisplayValues(); // NOM (r1, r3,...)
+    const A2= sh.getRange(4, 1, last-3, 1).getDisplayValues(); // PRÉNOM (r2, r4,...)
+    for (let r=3; r<=last-1; r+=2) {
+      const nom = (A[r-3][0]||'').trim().toUpperCase();
+      const prenom = (A2[r-4][0]||'').trim();
+      if (!nom && !prenom) continue;
+      const key = nom + '|' + prenom;
+      if (!clés.has(key)) clés.set(key, []);
+      clés.get(key).push({sheet: sh, row1:r});
+    }
+  });
+
+  // reset
+  feuilles.forEach(n=>{
+    const sh = ss.getSheetByName(n); if (!sh) return;
+    const last = sh.getLastRow(); if (last >= 3) {
+      sh.getRange(3,1,last-2,2).setBackground(null); // enlève éventuel jaune
+    }
+  });
+
+  // surbrillance jaune sur doublons
+  clés.forEach(list=>{
+    if (list.length <= 1) return;
+    list.forEach(({sheet,row1})=>{
+      sheet.getRange(row1,1,2,2).setBackground('#FFF3B0'); // jaune doux
+    });
+  });
+
+  SpreadsheetApp.getActive().toast('Doublons surlignés (jaune)', 'Script', 5);
+}
