@@ -146,17 +146,7 @@ function safeClearValidations_(rangeOrRangeList) {
   }
 }
 
-function safeSetNumberFormat_(range, format) {
-  try {
-    if (format && typeof format === 'string') {
-      range.setNumberFormat(format);
-    } else {
-      range.setNumberFormat('@'); // défaut: Texte
-    }
-  } catch (_) {
-    // Ne bloque pas si Apps Script refuse
-  }
-}
+
 
 
 
@@ -374,9 +364,7 @@ function disableDailyTrigger_() {
   });
 }
 
-function refreshWeekHighlightDaily_() {
-  try { surlignerSemaineEnCoursToutesFeuilles_(); } catch (err) { Logger.log(err); }
-}
+
 
 
 function refreshNowMenu_() {
@@ -456,14 +444,6 @@ function toDateOrNull_(v) {
   return isNaN(dt.getTime()) ? null : dt;
 }
 
-
-function __isDateLike_(v) {
-  if (v == null) return false;
-  if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v.getTime())) return true;
-  // Si c’est du texte, on tente le parse (ex: "25/08/2025")
-  if (typeof v === 'string') return !!toDateOrNull_(v);
-  return false;
-}
 
 
 /************
@@ -696,11 +676,6 @@ function appliquerValidationDatesPourColonnes_(sheet, cols, opts) {
 
 function getCurrentWeekCols_(sheet) {
   return computeWeekColsFromHeaders_(sheet, todayMidnight_()) || [];
-}
-function isCurrentWeekCol_(sheet, col) {
-  const cols = getCurrentWeekCols_(sheet);
-  for (let i = 0; i < cols.length; i++) if (cols[i] === col) return true;
-  return false;
 }
 
 
@@ -1597,14 +1572,6 @@ function appliquerValidationDatesPourBloc_(sheet, row1) {
 /************
   SURBRILLANCE – Semaine en cours (bleue)
 *************/
-function todayMidnight_() {
-  const tz = Session.getScriptTimeZone() || 'Europe/Paris';
-  const now = new Date();
-  const y = Utilities.formatDate(now, tz, 'yyyy');
-  const m = Utilities.formatDate(now, tz, 'MM');
-  const d = Utilities.formatDate(now, tz, 'dd');
-  return new Date(Number(y), Number(m)-1, Number(d), 0, 0, 0, 0);
-}
 
 
 
@@ -1845,30 +1812,6 @@ function focusHighlightedWeekAtOpen_() {
 
 
 
-// === (2) CLEAR — un seul bloc (optimisé), renvoie la liste de packs restants ===
-function clearForecastForBlock_(sheet, row1Abs) {
-  const packs = loadForecastPacks_(sheet);
-  if (!packs || !packs.length) return [];
-
-  const keep = [];
-  const a1s  = [];
-  const bg   = blockAlternanceColor_(row1Abs);
-
-  packs.forEach(pk => {
-    if (pk.r1 !== row1Abs) { keep.push(pk); return; }
-    try {
-      a1s.push(
-        sheet.getRange(row1Abs, pk.c1, NB_ROWS_BLOCK, pk.c2 - pk.c1 + 1).getA1Notation()
-      );
-    } catch (_) {}
-  });
-
-  if (a1s.length) __applyColorBatches_(sheet, a1s, bg);
-
-  storeForecastPacks_(sheet, keep);
-  SpreadsheetApp.flush();
-  return keep;
-}
 
 
 
@@ -2371,76 +2314,6 @@ function isEffectiveMark_(t1, t2) {
 
 
 
-
-
-
-
-// dernière intervention : renvoie {col, date} ou null
-// dernière intervention : renvoie {col, date} ou null
-function getLastInterventionForBlock_(sheet, row1Abs, lastCol) {
-  const width = lastCol - 2; if (width <= 0) return null;
-
-  const row1Vals = sheet.getRange(row1Abs, 3, 1, width).getValues()[0];           // dates (ligne 1)
-  const row1Disp = sheet.getRange(row1Abs, 3, 1, width).getDisplayValues()[0];    // textes (ligne 1)
-  const row2Disp = sheet.getRange(row1Abs + 1, 3, 1, width).getDisplayValues()[0];// textes (ligne 2)
-  const { plages } = getPlagesCachedForSheet_(sheet);
-
-  let best = null;
-  for (let c = 3; c <= lastCol; c++) {
-    const i  = c - 3;
-    const dv = row1Vals[i];
-    const dt = (dv && Object.prototype.toString.call(dv) === '[object Date]' && !isNaN(dv.getTime())) ? dv : null;
-    const effective = isEffectiveMark_(row1Disp[i], row2Disp[i]);
-    if (dt && effective) {
-      if (!best || dt > best.date) best = { col: c, date: dt };
-    }
-  }
-
-  // Fallback : "Terminé"/"Planifié" dans la SEMAINE COURANTE → date = début de semaine
-  if (!best) {
-    const today   = todayMidnight_();
-    const currIdx = findColumnIndexForDate_(plages, today);
-    if (currIdx >= 0) {
-      const s1 = String(row1Disp[currIdx] || '');
-      const s2 = String(row2Disp[currIdx] || '');
-      const norm = normalize_(s1 + ' ' + s2);
-
-      const hasTermine =
-        s1.includes('✔') || s2.includes('✔') ||
-        s1.includes('✅') || s2.includes('✅') ||
-        /\btermin(?:e|ee|er)\b/.test(norm);
-      const hasPlanifie = isPlanifieMark_(s1) || isPlanifieMark_(s2);
-
-      if (hasTermine || hasPlanifie) {
-        const p = plages[currIdx];
-        if (p && p.start) {
-          best = {
-            col: FIRST_DATA_COL + currIdx,
-            date: new Date(p.start.getFullYear(), p.start.getMonth(), p.start.getDate())
-          };
-        }
-      }
-    }
-  }
-  return best;
-}
-
-
-
-
-// Parcourt de droite à gauche les colonnes visibles : renvoie { col, date } ou null
-function getLastInterventionFromArrays_(row1Vals, row1Disp, row2Disp) {
-  for (let i = row1Vals.length - 1; i >= 0; i--) {
-    const dv = row1Vals[i];
-    const isDate = (dv && Object.prototype.toString.call(dv) === '[object Date]' && !isNaN(dv.getTime()));
-    if (!isDate) continue;
-    if (isEffectiveMark_(row1Disp[i], row2Disp[i])) {
-      return { col: i + FIRST_DATA_COL, date: dv };
-    }
-  }
-  return null;
-}
-
 /** Idem mais avec un léger filet de sécurité :
  * si rien n’est trouvé et que la SEMAINE COURANTE contient "Terminé" (pas "Planifié"),
  * on fabrique une date = début de la semaine courante pour l’index concerné.
@@ -2904,81 +2777,6 @@ function genererListingTelephoniquePrevisions() {
 
 
 
-// Calcule la “prochaine prévision” sans peindre la feuille
-// Calcule la “prochaine prévision” sans peindre la feuille
-function computeNextForecastForBlock_(sheet, row1Abs) {
-  const lastCol = Math.min(NB_COLS_BLOCK, sheet.getLastColumn());
-  if (lastCol < 3) return null;
-
-  const { plages } = getPlagesCachedForSheet_(sheet);
-  const startCol = Math.max(3, getNextWeekStartCol_(sheet));  // S+1
-  const startIdx = startCol - 3;
-
-  let visibleStartDate = null;
-  for (let j = startIdx; j < plages.length; j++) { if (plages[j]) { visibleStartDate = plages[j].start; break; } }
-  if (!visibleStartDate) return null;
-
-  const contrat = (sheet.getRange(row1Abs, COL_CONTRAT).getDisplayValue() || '').trim();
-  const freq = getFrequenceFromContrat_(contrat);
-  if (!freq) return null;
-
-  const widthData = lastCol - 2;
-  const row1Vals  = sheet.getRange(row1Abs,     3, 1, widthData).getValues()[0];
-  const row1Disp  = sheet.getRange(row1Abs,     3, 1, widthData).getDisplayValues()[0];
-  const row2Disp  = sheet.getRange(row1Abs + 1, 3, 1, widthData).getDisplayValues()[0];
-
-  const infoLast = getLastInterventionConsideringCurrentWeek_(plages, row1Vals, row1Disp, row2Disp);
-  const lastDate = infoLast ? infoLast.date : null;
-
-  // S+1 doit être la première colonne candidate selon la fréquence + être vide
-  const isFilledAt = (j) => (String(row1Disp[j] || '').trim() !== '' || String(row2Disp[j] || '').trim() !== '');
-  const s1IsCandidate = (
-    (freq === 'WEEKLY'   && !isFilledAt(startIdx)) ||
-    (freq === 'BIWEEKLY' && ( (infoLast && ((startCol - infoLast.col) % 2) === 0) || (!infoLast) ) && !isFilledAt(startIdx)) ||
-    (freq === 'MONTHLY'  && (function(){
-      let anchorDate = lastDate ? addMonths_(lastDate, 1) : visibleStartDate;
-      if (anchorDate < visibleStartDate) anchorDate = visibleStartDate;
-      const j = findColumnIndexForDate_(plages, anchorDate);
-      return (j === startIdx && !isFilledAt(startIdx));
-    })())
-  );
-  if (!s1IsCandidate) return null;
-
-  const firstCol  = startCol;
-  const jTarget   = startIdx;
-  const firstPlg  = plages[jTarget];
-  const firstDate = firstPlg ? firstPlg.start : null;
-  if (!firstPlg) return null;
-
-  // Nouveau client : BLEU si aucune planification à partir de S+1
-  if (!lastDate) {
-    const hasFuturePlanif = hasPlanifFromIndex_(row1Disp, row2Disp, jTarget);
-    if (hasFuturePlanif) return null;
-    return { firstCol, firstDate, firstColor: FORECAST_BG_NEW, lastDate: null };
-  }
-
-  // Autres cas : n’annoncer que si dueDate ≤ fin de S+1
-  let dueDate = null;
-  if      (freq === 'WEEKLY')   dueDate = addDays_(lastDate, 7);
-  else if (freq === 'BIWEEKLY') dueDate = addDays_(lastDate, 14);
-  else if (freq === 'MONTHLY')  dueDate = addMonths_(lastDate, 1);
-  if (!dueDate || dueDate > firstPlg.end) return null;
-
-  // Couleur selon retard à S+1
-  let firstColor = FORECAST_BG_OK;
-  let weeksBehind = 0;
-  const dueIdx = findColumnIndexForDate_(plages, dueDate);
-  if (dueIdx >= 0) {
-    weeksBehind = Math.max(0, jTarget - dueIdx);
-  } else {
-    const ms = 24*60*60*1000;
-    weeksBehind = Math.max(0, Math.floor((firstDate - dueDate) / ms / 7));
-  }
-  if (weeksBehind >= 2)      firstColor = FORECAST_BG_URGENT;
-  else if (weeksBehind === 1) firstColor = FORECAST_BG;
-
-  return { firstCol, firstDate, firstColor, lastDate };
-}
 
 
 
@@ -3099,26 +2897,7 @@ function styliserListingPrevisions_(sh, totalCols, groupMeta) {
 
 /** Normalise tous les numéros (A..B) en texte, format FR “00 00 00 00 00”. */
 
-function normaliserTelephonesToutesFeuilles() {
-  // Respecte ta contrainte : ne pas réactiver les prévisions automatiquement
-  desactiverPrevisionsAutoSiActives_();
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let totalCorriges = 0, totalVus = 0;
-
-  [SHEET_CLIENTS, SHEET_PONCTUEL].forEach(name => {
-    const sh = ss.getSheetByName(name);
-    if (!sh) return;
-    const r = normaliserTelephonesDansFeuille_(sh);
-    totalCorriges += r.corriges;
-    totalVus += r.vus;
-  });
-
-  SpreadsheetApp.getActive().toast(
-    `Téléphones normalisés : ${totalCorriges}/${totalVus} cellules corrigées`,
-    'Gestion client', 5
-  );
-}
 
 // --- 2) Normalisation dans les feuilles clients (menu "Normaliser tous les téléphones 📱") ---
 function normaliserTelephonesDansFeuille_(sheet) {
@@ -3527,42 +3306,6 @@ function wrapStandaloneHtml_(inner) {
 
 
 
-// Protège le HTML de base (nom, prénom, contrat, téléphone)
-function escapeHtml_(s) {
-  return String(s || '')
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
-}
-
-// Renvoie l'HTML complet (pour ouverture en onglet)
-function getListingPrevisionsStandaloneHtml() {
-  const data = getListingPrevisionsData_();
-  const body = renderSimpleListingHtml_(data); // fragment
-  return wrapStandaloneHtml_(body);            // page complète
-}
-
-
-// Génère un PDF sur Drive et renvoie {url, name}
-function exportListingPrevisionsPdf(opts) {
-  const share = !(opts && opts.share === false); // défaut = partagé
-
-  const data = getListingPrevisionsData_();
-  const body = renderSimpleListingHtml_(data);
-  const html = wrapStandaloneHtml_(body);
-
-  const blob = Utilities.newBlob(html, 'text/html', 'listing.html').getAs('application/pdf');
-  const name = '📞 Listing Téléphone (semaine à venir) - ' +
-    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd_HHmm') + '.pdf';
-  blob.setName(name);
-
-  const file = DriveApp.createFile(blob);
-  if (share) {
-    try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (_) {}
-  }
-  return { url: file.getUrl(), name };
-}
-
-
 
 
 function wrapStandaloneHtmlForPdf_(inner) {
@@ -3624,34 +3367,6 @@ function exportListingPrevisionsPdfFromHtml(htmlFragment, opts) {
   return { url: file.getUrl(), name };
 }
 
-
-
-
-/**
- * Exporte la feuille "Listing Prévisions 📞" en PDF (couleurs conservées).
- * Si la feuille n'existe pas ou n'est pas à jour, on la régénère avant.
- * Retourne {url, name}.
- */
-function exportListingPrevisionsPdfFromSheet(opts) {
-  const share = !(opts && opts.share === false);
-
-  try { genererListingTelephoniquePrevisions(); } catch(e) { Logger.log(e); }
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName(LISTING_SHEET_NAME);
-  if (!sh) throw new Error('Feuille "' + LISTING_SHEET_NAME + '" introuvable.');
-
-  const pdfBlob = exportSheetAsPdf_(ss, sh);
-  const fileName = '📞 Listing Téléphone (semaine à venir) - ' +
-    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd_HHmm') + '.pdf';
-
-  pdfBlob.setName(fileName);
-  const file = DriveApp.createFile(pdfBlob);
-  if (share) {
-    try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch(_) {}
-  }
-  return { url: file.getUrl(), name: fileName };
-}
 
 
 /**
@@ -3830,15 +3545,6 @@ function getSyntheseHtmlFragment(opts) {
   return renderSyntheseHtmlFragment_(data);
 }
 
-/** Ouvre en plein onglet : renvoie la page HTML complète. */
-function getSyntheseStandaloneHtml(opts) {
-  const def = getSyntheseDefaults_();
-  const mois  = (opts && +opts.mois>=1 && +opts.mois<=12) ? +opts.mois : def.mois;
-  const annee = (opts && +opts.annee) ? +opts.annee : def.annee;
-  const data = genererSyntheseTransports({ mois, annee });
-  const body = renderSyntheseHtmlFragment_(data);
-  return wrapStandaloneHtmlSynthese_(body);
-}
 
 /** Exporte en PDF (sans créer d’onglet). Retourne {url,name}. */
 function exportSynthesePdf(opts) {
@@ -4123,41 +3829,7 @@ function InstallerMiseEnRougeChampsVides() {
 }
 
 
-function reparerTout_() {
-  const ss = SpreadsheetApp.getActive();
-  const props = PropertiesService.getDocumentProperties();
-  const feuilles = [SHEET_CLIENTS, SHEET_PONCTUEL];
 
-  // 1) Invalider le cache de surbrillance
-  feuilles.forEach(n => {
-    const sh = ss.getSheetByName(n); if (!sh) return;
-    const sid = sh.getSheetId();
-    props.deleteProperty(PROP_WEEK_LAST_ROWS_PREFIX + sid);
-    props.deleteProperty(PROP_WEEK_BORDER_COLS_PREFIX + '_' + sid);
-  });
-
-  // 2) Repeindre semaine + prévisions éventuelles
-  if (typeof surlignerSemaineEnCoursToutesFeuilles_ === 'function') {
-    surlignerSemaineEnCoursToutesFeuilles_();
-  }
-
-  // 3) Reposer les validations (si tes fonctions existent)
-  try { if (typeof resynchroniserValidationsStatutDepuisTemplate === 'function') resynchroniserValidationsStatutDepuisTemplate(); } catch(_){}
-  try { if (typeof recalculerValidationsDepuisMenu === 'function') recalculerValidationsDepuisMenu(); } catch(_){}
-
-  // 4) Reposer la MFC "champs vides en rouge" (si tu l’utilises)
-  try { if (typeof InstallerMiseEnRougeChampsVides === 'function') InstallerMiseEnRougeChampsVides(); } catch(_){}
-  try { SpreadsheetApp.getActiveSpreadsheet().toast('Réparation terminée ✅', 'Script', 5); } catch(_){}
-}
-
-
-function invalidateHighlightCacheForSheet_(sheet) {
-  if (!sheet) return;
-  const props = PropertiesService.getDocumentProperties();
-  const sid = sheet.getSheetId();
-  props.deleteProperty(PROP_WEEK_LAST_ROWS_PREFIX + sid);
-  props.deleteProperty(PROP_WEEK_BORDER_COLS_PREFIX + '_' + sid);
-}
 
 function normaliserTelFR_(raw) {
   if (raw == null) return '';
@@ -4197,45 +3869,6 @@ function normaliserTelephonesToutesFeuilles() {
 }
 
 
-function surlignerDoublonsClients_() {
-  const ss = SpreadsheetApp.getActive();
-  const feuilles = [SHEET_CLIENTS, SHEET_PONCTUEL];
-  const clés = new Map(); // "NOM|Prénom" -> [ {sheet, row1} ]
-
-  feuilles.forEach(n => {
-    const sh = ss.getSheetByName(n); if (!sh) return;
-    const last = sh.getLastRow(); if (last < 4) return;
-    const A = sh.getRange(3, 1, last-2, 1).getDisplayValues(); // NOM (r1, r3,...)
-    const A2= sh.getRange(4, 1, last-3, 1).getDisplayValues(); // PRÉNOM (r2, r4,...)
-    for (let r=3; r<=last-1; r+=2) {
-      const nom = (A[r-3][0]||'').trim().toUpperCase();
-      const prenom = (A2[r-4][0]||'').trim();
-      if (!nom && !prenom) continue;
-      const key = nom + '|' + prenom;
-      if (!clés.has(key)) clés.set(key, []);
-      clés.get(key).push({sheet: sh, row1:r});
-    }
-  });
-
-  // reset
-  feuilles.forEach(n=>{
-    const sh = ss.getSheetByName(n); if (!sh) return;
-    const last = sh.getLastRow(); if (last >= 3) {
-      sh.getRange(3,1,last-2,2).setBackground(null); // enlève éventuel jaune
-    }
-  });
-
-  // surbrillance jaune sur doublons
-  clés.forEach(list=>{
-    if (list.length <= 1) return;
-    list.forEach(({sheet,row1})=>{
-      sheet.getRange(row1,1,2,2).setBackground('#FFF3B0'); // jaune doux
-    });
-  });
-
-  SpreadsheetApp.getActive().toast('Doublons surlignés (jaune)', 'Script', 5);
-}
-
 
 
 
@@ -4251,25 +3884,8 @@ const PROP_MASKED_CLIENTS_V2 = 'MASKED_CLIENTS_V2'; // DocumentProperties JSON
 const MASK_BG_DARK  = '#1F2937'; // gris très foncé
 const MASK_FG_LIGHT = '#FFFFFF'; // texte clair
 
-function makeClientKey_(nom, prenom, tel) {
-  const N = String(nom||'').trim().toUpperCase();
-  const P = String(prenom||'').trim();
-  const T = String(tel||'').replace(/\D/g,''); // chiffres seuls
-  return N + '|' + P + '|' + T;
-}
-function readMaskedMap_({purgeExpired=true}={}) {
-  const props = PropertiesService.getDocumentProperties();
-  let obj = {};
-  try { obj = JSON.parse(props.getProperty(PROP_MASKED_CLIENTS_V2) || '{}'); } catch(_) { obj = {}; }
-  const map = new Map(Object.entries(obj).map(([k,v]) => [k, Number(v)||0]));
-  if (purgeExpired) purgeExpiredMasks_(map);
-  return map;
-}
-function saveMaskedMap_(map) {
-  const obj = {};
-  map.forEach((until,k)=> obj[k]=Number(until)||0);
-  PropertiesService.getDocumentProperties().setProperty(PROP_MASKED_CLIENTS_V2, JSON.stringify(obj));
-}
+
+
 function purgeExpiredMasks_(map) {
   const todayEnd = new Date(todayMidnight_().getTime() + 24*60*60*1000 - 1);
   let changed = false;
@@ -4278,99 +3894,6 @@ function purgeExpiredMasks_(map) {
   }
   if (changed) saveMaskedMap_(map);
 }
-function getMaskedKeysSet_() {
-  return new Set(Array.from(readMaskedMap_({purgeExpired:true}).keys()));
-}
-
-
-
-/** Liste pour UI : clients par feuille + liste des masqués (label + date) */
-/** Clients pour la boîte "Masquer un client"
- *  - Dropdown : UNIQUEMENT "Client Régulier" (non masqués)
- *  - Panneau "Clients masqués" : tous les masqués (Régulier + Ponctuel)
- *  - Tolérant aux constantes manquantes (fallbacks).
- */
-/**
- * Alimente la boîte “Masquer un client” :
- * - Dropdown : UNIQUEMENT les clients de "Client Régulier" (non masqués)
- * - Panneau "Clients masqués" : tous les masqués (avec label et date)
- * Réutilise la même filière que "Modifier"/"Supprimer": getListeClientsTous + getClientDataTous
- */
-/** Dropdown = UNIQUEMENT "Client Régulier" (non masqués) | Panneau = tous les masqués */
-/**
- * V2 robuste pour alimenter la boîte "Masquer un client".
- * - Dropdown : UNIQUEMENT "Client Régulier" (hors clients déjà masqués)
- * - Panneau "Masqués" : tous les masqués (toutes feuilles)
- * - Tolérante aux constantes/helpers manquants.
- */
-function uiListClientsPourMasquageV2_() {
-  try {
-    const SHEET_NAME_REG = (typeof SHEET_CLIENTS === 'string' ? SHEET_CLIENTS : 'Client Régulier');
-    const FIRST_ROW      = (typeof FIRST_DATA_ROW === 'number' ? FIRST_DATA_ROW : 3);
-    const BLOCK_ROWS     = (typeof NB_ROWS_BLOCK === 'number' ? NB_ROWS_BLOCK : 2);
-    const COL_TEL_IDX    = (typeof COL_TEL === 'number' ? COL_TEL : 2);
-    const tz             = Session.getScriptTimeZone() || 'Europe/Paris';
-
-    // Masqués (purge auto si dispo)
-    let maskedMap = new Map();
-    try { if (typeof readMaskedMap_ === 'function') maskedMap = readMaskedMap_({purgeExpired:true}); } catch(_){}
-    const maskedSet = new Set(Array.from(maskedMap.keys()));
-
-    // Lecture directe "Client Régulier"
-    const ss = SpreadsheetApp.getActive();
-    const sh = ss.getSheetByName(SHEET_NAME_REG);
-    if (!sh) return { ok:false, message:`Feuille introuvable: "${SHEET_NAME_REG}"`, clients:[], masked:[] };
-
-    const last = sh.getLastRow();
-    if (last < FIRST_ROW) return { ok:true, clients:[], masked:[], info:'Aucun client détecté (feuille vide)' };
-
-    const h = last - (FIRST_ROW - 1);
-    const A = sh.getRange(FIRST_ROW, 1,          h, 1).getDisplayValues();          // Nom/Prénom
-    const T = sh.getRange(FIRST_ROW, COL_TEL_IDX, h, 1).getDisplayValues();         // Tel (ligne 2)
-
-    const dropdown = [];
-    for (let r1 = FIRST_ROW; r1 + 1 <= last; r1 += BLOCK_ROWS) {
-      const nom    = (A[r1 - FIRST_ROW]?.[0] || '').trim();
-      const prenom = (A[r1 - FIRST_ROW + 1]?.[0] || '').trim();
-      const telRaw = (T[r1 - FIRST_ROW + 1]?.[0] || '').trim();
-      if (!nom && !prenom) continue;
-
-      const key = (typeof makeClientKey_ === 'function')
-        ? makeClientKey_(nom, prenom, telRaw)
-        : (String(nom).toUpperCase() + '|' + String(prenom) + '|' + String(telRaw).replace(/\D/g,''));
-
-      if (maskedSet.has(key)) continue; // déjà masqué => pas dans la liste
-      dropdown.push({ key, label: `${nom || '(Sans NOM)'} ${prenom || ''}`.trim() });
-    }
-
-    // Liste des masqués (toutes feuilles) + date
-    const maskedOut = [];
-    maskedSet.forEach(key => {
-      let label = key.split('|').slice(0,2).join(' ').trim();
-      try {
-        if (typeof findBlockByKeyAcrossSheets_ === 'function') {
-          const loc = findBlockByKeyAcrossSheets_(key);
-          if (loc) {
-            const nom    = String(loc.sheet.getRange(loc.r1,   1).getDisplayValue() || '').trim();
-            const prenom = String(loc.sheet.getRange(loc.r1+1, 1).getDisplayValue() || '').trim();
-            label = `${nom || '(Sans NOM)'} ${prenom || ''}`.trim() + ' — ' + loc.sheet.getName();
-          }
-        }
-      } catch(_){}
-      const until = maskedMap.get(key) || 0;
-      const untilISO = until ? Utilities.formatDate(new Date(until), tz, 'yyyy-MM-dd') : '';
-      maskedOut.push({ key, label, untilISO });
-    });
-
-    dropdown.sort((a,b)=>a.label.localeCompare(b.label, 'fr'));
-    maskedOut.sort((a,b)=>a.label.localeCompare(b.label, 'fr'));
-
-    return { ok:true, clients: dropdown, masked: maskedOut };
-  } catch (e) {
-    return { ok:false, message: (e && e.message) ? e.message : String(e), clients:[], masked:[] };
-  }
-}
-
 
 
 
@@ -4406,45 +3929,6 @@ function uiComputeNextPlanifDate_(key) {
   return { ok:false, message:'Aucune planification future' };
 }
 
-/** Masque un client jusqu’à une date (ISO) OU jusqu’à la prochaine planif */
-function uiMaskClient_(payload) {
-  const { key, mode, dateISO } = payload || {};
-  if (!key) return {ok:false, message:'Aucun client sélectionné'};
-
-  const map = readMaskedMap_({purgeExpired:true});
-  const tz  = Session.getScriptTimeZone() || 'Europe/Paris';
-  let untilMs = 0;
-
-  if (mode === 'date') {
-    if (!dateISO) return {ok:false, message:'Date manquante'};
-    const [y,m,d] = dateISO.split('-').map(n=>parseInt(n,10));
-    untilMs = new Date(y, m-1, d, 23,59,59,999).getTime(); // fin de journée
-  } else if (mode === 'next') {
-    const r = uiComputeNextPlanifDate_(key);
-    if (!r.ok) return r;
-    const [y,m,d] = r.dateISO.split('-').map(n=>parseInt(n,10));
-    // on masque jusqu’à la veille de la prochaine planif
-    untilMs = new Date(y, m-1, d, 0,0,0,0).getTime() - 1;
-  } else {
-    return {ok:false, message:'Mode invalide'};
-  }
-
-  map.set(key, untilMs);
-  saveMaskedMap_(map);
-
-  // Repaint global pour voir le gris tout de suite
-  try { surlignerSemaineEnCoursToutesFeuilles_(); } catch(_){}
-  return { ok:true, data: uiListClientsPourMasquage_() };
-}
-
-/** Démasque un client */
-function uiUnmaskClient_(key) {
-  const map = readMaskedMap_({purgeExpired:false});
-  map.delete(key);
-  saveMaskedMap_(map);
-  try { surlignerSemaineEnCoursToutesFeuilles_(); } catch(_){}
-  return { ok:true, data: uiListClientsPourMasquage_() };
-}
 
 /** Localise un bloc par clé, sur l’une des 2 feuilles */
 function findBlockByKeyAcrossSheets_(key) {
@@ -4470,22 +3954,6 @@ function findBlockByKeyAcrossSheets_(key) {
 }
 
 
-function masquerClientDialog() {
-  const data = uiListClientsPourMasquageV2_();
-  const tpl  = HtmlService.createTemplateFromFile('masquerClient'); // sans .html
-  tpl.initialDataJson = JSON.stringify(data);
-  const view = tpl.evaluate()
-    .setWidth(620).setHeight(520)
-    .setSandboxMode(HtmlService.SandboxMode.IFRAME)
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-  SpreadsheetApp.getUi().showModalDialog(view, 'Masquer un client');
-}
-
-
-
-
-
-
 
 function refreshWeekHighlightDaily_() {
   try { readMaskedMap_({purgeExpired:true}); } catch(_){}
@@ -4498,89 +3966,6 @@ function refreshWeekHighlightDaily_() {
   } catch(e) { Logger.log(e); }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/**** ===== HANDLERS SERVEUR POUR "Masquer un client" ===== ****/
-
-/** Utilitaires fallback (n’écrasent pas tes versions si elles existent) */
-var __MASK_PROP_KEY = (typeof PROP_MASKED_CLIENTS_V2 === 'undefined') ? 'MASKED_CLIENTS_V2' : PROP_MASKED_CLIENTS_V2;
-
-if (typeof todayMidnight_ !== 'function') {
-  function todayMidnight_() {
-    const tz = Session.getScriptTimeZone() || 'Europe/Paris';
-    const now = new Date();
-    const y = Utilities.formatDate(now, tz, 'yyyy');
-    const m = Utilities.formatDate(now, tz, 'MM');
-    const d = Utilities.formatDate(now, tz, 'dd');
-    return new Date(Number(y), Number(m)-1, Number(d), 0, 0, 0, 0);
-  }
-}
-
-if (typeof makeClientKey_ !== 'function') {
-  function makeClientKey_(nom, prenom, tel) {
-    const N = String(nom||'').trim().toUpperCase();
-    const P = String(prenom||'').trim();
-    const T = String(tel||'').replace(/\D/g,'');
-    return N + '|' + P + '|' + T;
-  }
-}
-
-if (typeof readMaskedMap_ !== 'function') {
-  function readMaskedMap_({purgeExpired=true}={}) {
-    const props = PropertiesService.getDocumentProperties();
-    let obj = {};
-    try { obj = JSON.parse(props.getProperty(__MASK_PROP_KEY) || '{}'); } catch(_) { obj = {}; }
-    const map = new Map(Object.entries(obj).map(([k,v]) => [k, Number(v)||0]));
-    if (purgeExpired) {
-      const todayEnd = new Date(todayMidnight_().getTime() + 24*60*60*1000 - 1);
-      let changed = false;
-      for (const [k,until] of Array.from(map.entries())) {
-        if (!until || until <= todayEnd.getTime()) { map.delete(k); changed = true; }
-      }
-      if (changed) {
-        const out = {}; map.forEach((v,k)=> out[k]=v);
-        props.setProperty(__MASK_PROP_KEY, JSON.stringify(out));
-      }
-    }
-    return map;
-  }
-}
-
-if (typeof saveMaskedMap_ !== 'function') {
-  function saveMaskedMap_(map) {
-    const props = PropertiesService.getDocumentProperties();
-    const obj = {}; map.forEach((v,k)=> obj[k]=Number(v)||0);
-    props.setProperty(__MASK_PROP_KEY, JSON.stringify(obj));
-  }
-}
-
-if (typeof getMaskedKeysSet_ !== 'function') {
-  function getMaskedKeysSet_() {
-    try {
-      const map = (typeof readMaskedMap_ === 'function') ? readMaskedMap_({purgeExpired:true}) : new Map();
-      return new Set(Array.from(map.keys()));
-    } catch (_) { return new Set(); }
-  }
-}
 
 /** ===== 1) Liste initiale pour la modale (dropdown Régulier + liste masqués) */
 function uiListClientsPourMasquageV2_() {
@@ -4805,59 +4190,10 @@ function masq_ui_list_v1() {
   }
 }
 
-// --- Masquage
-function masq_ui_mask_v1(payload) {
-  try {
-    const { key, mode, dateISO } = payload || {};
-    if (!key) return {ok:false, message:'Aucun client sélectionné'};
 
-    const map = readMaskedMap_({purgeExpired:true});
-    let untilMs = 0;
 
-    if (mode === 'date') {
-      if (!dateISO) return {ok:false, message:'Date manquante'};
-      const [y,m,d] = dateISO.split('-').map(n=>parseInt(n,10));
-      untilMs = new Date(y, m-1, d, 23,59,59,999).getTime(); // fin de journée
-    } else if (mode === 'next') {
-      if (typeof uiComputeNextPlanifDate_ === 'function') {
-        const r = uiComputeNextPlanifDate_(key);
-        if (!r || !r.ok) return {ok:false, message: (r && r.message) || 'Impossible de trouver la prochaine planification'};
-        const [y,m,d] = r.dateISO.split('-').map(n=>parseInt(n,10));
-        untilMs = new Date(y, m-1, d, 0,0,0,0).getTime() - 1; // veille 23:59:59
-      } else {
-        return {ok:false, message:'uiComputeNextPlanifDate_ indisponible dans ce projet.'};
-      }
-    } else {
-      return {ok:false, message:'Mode invalide'};
-    }
 
-    map.set(key, untilMs);
-    saveMaskedMap_(map);
 
-    try {
-      if (typeof surlignerSemaineEnCoursToutesFeuilles_ === 'function') surlignerSemaineEnCoursToutesFeuilles_();
-    } catch(_){}
-
-    return { ok:true, data: masq_ui_list_v1() };
-  } catch (e) {
-    return { ok:false, message: (e && e.message) ? e.message : String(e) };
-  }
-}
-
-// --- Démasquage
-function masq_ui_unmask_v1(key) {
-  try {
-    const map = readMaskedMap_({purgeExpired:false});
-    map.delete(key);
-    saveMaskedMap_(map);
-    try {
-      if (typeof surlignerSemaineEnCoursToutesFeuilles_ === 'function') surlignerSemaineEnCoursToutesFeuilles_();
-    } catch(_){}
-    return { ok:true, data: masq_ui_list_v1() };
-  } catch (e) {
-    return { ok:false, message: (e && e.message) ? e.message : String(e) };
-  }
-}
 
 // --- Ouvrir la modale (IFRAME + injection des données)
 function masquerClientDialog() {
@@ -4902,11 +4238,7 @@ function repaintForecastAndMasksAll_() {
   SpreadsheetApp.flush();
 }
 
-/** À câbler sur le menu “Activer les prévisions” */
-function menuActiverPrevisions_v2() {
-  __setForecastEnabledCompat_(true);
-  repaintForecastAndMasksAll_();
-}
+
 
 
 
@@ -4933,17 +4265,7 @@ function __repaintToutAvecMasque__() {
   SpreadsheetApp.flush();
 }
 
-/** 👉 À appeler pour “Activer les prévisions” (met le flag ON + repaint + gris masqués immédiat) */
-function activerPrevisionsEtRepaintMaintenant_() {
-  // Mets ton flag "prévisions actives" à ON (adapte si ton setter s’appelle autrement)
-  if (typeof setForecastEnabled_ === 'function') {
-    setForecastEnabled_(true);
-  } else {
-    // fallback simple si pas de setter dédié
-    PropertiesService.getDocumentProperties().setProperty('FORECAST_ENABLED', '1');
-  }
-  __repaintToutAvecMasque__();
-}
+
 
 
 function __setForecastON__() {
@@ -4954,23 +4276,6 @@ function __setForecastON__() {
   }
 }
 
-/* ALIAS 1 */
-function activerPrevisions_() {
-  __setForecastON__();
-  __repaintToutAvecMasque__();
-}
-
-/* ALIAS 2 */
-function menuActiverPrevisions_() {
-  __setForecastON__();
-  __repaintToutAvecMasque__();
-}
-
-/* ALIAS 3 */
-function activerPrevisions() {
-  __setForecastON__();
-  __repaintToutAvecMasque__();
-}
 
 /** Couleur "gris très foncé" pour S+1 des clients masqués (fallback si constante absente) */
 var FORECAST_BG_MASKED = (typeof FORECAST_BG_MASKED === 'string') ? FORECAST_BG_MASKED : '#111827';
@@ -5095,51 +4400,8 @@ function AutoMasquageS1_Handler_() {
 // (Optionnel) tick régulier au cas où un autre script recolorie après nous.
 function AutoMasquageS1_Cron_() { AutoMasquageS1_Handler_(); }
 
-// Installe les triggers (à lancer UNE FOIS depuis l’éditeur).
-function InstallerAutoMasquageS1_() {
-  // Nettoyage des anciens triggers auto-masque
-  ScriptApp.getProjectTriggers().forEach(t => {
-    const h = t.getHandlerFunction();
-    if (h === 'AutoMasquageS1_Handler_' || h === 'AutoMasquageS1_Cron_') {
-      ScriptApp.deleteTrigger(t);
-    }
-  });
 
-  const ss = SpreadsheetApp.getActive();
 
-  // 1) À l’ouverture du fichier
-  ScriptApp.newTrigger('AutoMasquageS1_Handler_')
-    .forSpreadsheet(ss)
-    .onOpen()
-    .create();
 
-  // 2) À chaque édition (saisie, collage…)
-  ScriptApp.newTrigger('AutoMasquageS1_Handler_')
-    .forSpreadsheet(ss)
-    .onEdit()
-    .create();
-
-  // 3) Sur changements structurels (ajout feuille, import, etc.)
-  ScriptApp.newTrigger('AutoMasquageS1_Handler_')
-    .forSpreadsheet(ss)
-    .onChange()
-    .create();
-
-  // 4) Filet de sécurité : toutes les 2 minutes
-  ScriptApp.newTrigger('AutoMasquageS1_Cron_')
-    .timeBased()
-    .everyMinutes(2)
-    .create();
-}
-
-// Désinstalle proprement (si un jour tu veux enlever l’autopilote)
-function DesinstallerAutoMasquageS1_() {
-  ScriptApp.getProjectTriggers().forEach(t => {
-    const h = t.getHandlerFunction();
-    if (h === 'AutoMasquageS1_Handler_' || h === 'AutoMasquageS1_Cron_') {
-      ScriptApp.deleteTrigger(t);
-    }
-  });
-}
 
 
