@@ -4317,58 +4317,54 @@ function appliquerMasquageS1SurFeuille_(sheet) {
  * - Panneau "Clients masqués" : tous les masqués (avec label et date)
  * Réutilise la même filière que "Modifier"/"Supprimer": getListeClientsTous + getClientDataTous
  */
-function uiListClientsPourMasquage_() {
+/** Dropdown = UNIQUEMENT "Client Régulier" (non masqués) | Panneau = tous les masqués */
+/**
+ * V2 robuste pour alimenter la boîte "Masquer un client".
+ * - Dropdown : UNIQUEMENT "Client Régulier" (hors clients déjà masqués)
+ * - Panneau "Masqués" : tous les masqués (toutes feuilles)
+ * - Tolérante aux constantes/helpers manquants.
+ */
+function uiListClientsPourMasquageV2_() {
   try {
-    const tz = Session.getScriptTimeZone() || 'Europe/Paris';
     const SHEET_NAME_REG = (typeof SHEET_CLIENTS === 'string' ? SHEET_CLIENTS : 'Client Régulier');
+    const FIRST_ROW      = (typeof FIRST_DATA_ROW === 'number' ? FIRST_DATA_ROW : 3);
+    const BLOCK_ROWS     = (typeof NB_ROWS_BLOCK === 'number' ? NB_ROWS_BLOCK : 2);
+    const COL_TEL_IDX    = (typeof COL_TEL === 'number' ? COL_TEL : 2);
+    const tz             = Session.getScriptTimeZone() || 'Europe/Paris';
 
-    // Lecture des masqués (et purge des expirés)
-    const maskedMap = (typeof readMaskedMap_ === 'function')
-      ? readMaskedMap_({purgeExpired:true})
-      : new Map();
+    // Masqués (purge auto si dispo)
+    let maskedMap = new Map();
+    try { if (typeof readMaskedMap_ === 'function') maskedMap = readMaskedMap_({purgeExpired:true}); } catch(_){}
     const maskedSet = new Set(Array.from(maskedMap.keys()));
 
-    // 1) Récupérer la liste "officielle" des clients (même pipeline que les autres boîtes)
-    if (typeof getListeClientsTous !== 'function' || typeof getClientDataTous !== 'function') {
-      return { ok:false, message: 'getListeClientsTous() ou getClientDataTous() introuvable dans le projet.' };
-    }
-    const nomsComplets = getListeClientsTous() || []; // tableau de "Nom Prénom"
+    // Lecture directe "Client Régulier"
+    const ss = SpreadsheetApp.getActive();
+    const sh = ss.getSheetByName(SHEET_NAME_REG);
+    if (!sh) return { ok:false, message:`Feuille introuvable: "${SHEET_NAME_REG}"`, clients:[], masked:[] };
 
-    // 2) Composer le dropdown : uniquement ceux de "Client Régulier", non masqués
+    const last = sh.getLastRow();
+    if (last < FIRST_ROW) return { ok:true, clients:[], masked:[], info:'Aucun client détecté (feuille vide)' };
+
+    const h = last - (FIRST_ROW - 1);
+    const A = sh.getRange(FIRST_ROW, 1,          h, 1).getDisplayValues();          // Nom/Prénom
+    const T = sh.getRange(FIRST_ROW, COL_TEL_IDX, h, 1).getDisplayValues();         // Tel (ligne 2)
+
     const dropdown = [];
-    nomsComplets.forEach(nc => {
-      if (!nc) return;
-
-      const info = getClientDataTous(nc); // même structure utilisée par tes boîtes
-      if (!info) return;
-
-      // On récupère la feuille d’origine (plusieurs projets renvoient sheet.getName() ou sheetName)
-      const sheetName =
-        (info.sheet && info.sheet.getName && info.sheet.getName()) ||
-        info.sheetName ||
-        info.feuille ||
-        '';
-
-      if (sheetName !== SHEET_NAME_REG) return;
-
-      // Téléphone (affiché par getClientDataTous), sert à construire la clé stable
-      const telRaw = (info.tel != null ? String(info.tel) : '').trim();
-
-      // Nom/Prénom “officiels” renvoyés par getClientDataTous (robuste aux variantes)
-      const nom    = (info.nom != null ? String(info.nom) : '').trim();
-      const prenom = (info.prenom != null ? String(info.prenom) : '').trim();
+    for (let r1 = FIRST_ROW; r1 + 1 <= last; r1 += BLOCK_ROWS) {
+      const nom    = (A[r1 - FIRST_ROW]?.[0] || '').trim();
+      const prenom = (A[r1 - FIRST_ROW + 1]?.[0] || '').trim();
+      const telRaw = (T[r1 - FIRST_ROW + 1]?.[0] || '').trim();
+      if (!nom && !prenom) continue;
 
       const key = (typeof makeClientKey_ === 'function')
         ? makeClientKey_(nom, prenom, telRaw)
-        : (nom.toUpperCase() + '|' + prenom + '|' + telRaw.replace(/\D/g,''));
+        : (String(nom).toUpperCase() + '|' + String(prenom) + '|' + String(telRaw).replace(/\D/g,''));
 
-      if (maskedSet.has(key)) return; // déjà masqué → pas dans le menu
+      if (maskedSet.has(key)) continue; // déjà masqué => pas dans la liste
+      dropdown.push({ key, label: `${nom || '(Sans NOM)'} ${prenom || ''}`.trim() });
+    }
 
-      const label = (nc || `${nom} ${prenom}`.trim()) || '(Sans NOM)';
-      dropdown.push({ key, label });
-    });
-
-    // 3) Construire la liste des MASQUÉS (toutes feuilles) avec libellé lisible
+    // Liste des masqués (toutes feuilles) + date
     const maskedOut = [];
     maskedSet.forEach(key => {
       let label = key.split('|').slice(0,2).join(' ').trim();
@@ -4381,7 +4377,7 @@ function uiListClientsPourMasquage_() {
             label = `${nom || '(Sans NOM)'} ${prenom || ''}`.trim() + ' — ' + loc.sheet.getName();
           }
         }
-      } catch(_) {}
+      } catch(_){}
       const until = maskedMap.get(key) || 0;
       const untilISO = until ? Utilities.formatDate(new Date(until), tz, 'yyyy-MM-dd') : '';
       maskedOut.push({ key, label, untilISO });
@@ -4391,11 +4387,13 @@ function uiListClientsPourMasquage_() {
     maskedOut.sort((a,b)=>a.label.localeCompare(b.label, 'fr'));
 
     return { ok:true, clients: dropdown, masked: maskedOut };
-
   } catch (e) {
-    return { ok:false, message: (e && e.message) ? e.message : String(e) };
+    return { ok:false, message: (e && e.message) ? e.message : String(e), clients:[], masked:[] };
   }
 }
+
+
+
 
 
 
@@ -4494,9 +4492,24 @@ function findBlockByKeyAcrossSheets_(key) {
 
 
 function masquerClientDialog() {
-  const html = HtmlService.createHtmlOutputFromFile('masquerClient').setWidth(620).setHeight(480);
-  SpreadsheetApp.getUi().showModalDialog(html, 'Masquer un client');
+  const data = uiListClientsPourMasquageV2_(); // {ok, clients, masked, ...}
+
+  const tpl =
+    HtmlService.createTemplateFromFile('masquerClient'); // ton fichier s’appelle bien masquerClient.html
+  tpl.initialDataJson = JSON.stringify(data);
+
+  const view = tpl.evaluate()
+    .setWidth(620)
+    .setHeight(520)
+    .setSandboxMode(HtmlService.SandboxMode.IFRAME)                // ✅ force IFRAME (google.script.run dispo)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL); // ✅ évite les blocages d’iframe
+
+  SpreadsheetApp.getUi().showModalDialog(view, 'Masquer un client');
 }
+
+
+
+
 
 
 
