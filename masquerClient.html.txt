@@ -4,35 +4,31 @@
   <base target="_top">
   <meta charset="UTF-8" />
   <style>
-    :root {
-      --bg:#0f172a; --panel:#111827; --muted:#94a3b8; --text:#e5e7eb;
-      --primary:#60a5fa; --primary-2:#2563eb; --danger:#ef4444; --accent:#22d3ee;
-      --chip:#1f2937;
-    }
-    * { box-sizing: border-box; }
-    body { margin:0; padding:16px; background:linear-gradient(180deg,var(--bg),#020617); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
-    h2 { margin:0 0 12px; font-size:20px; letter-spacing:.2px; }
-    .card { background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02)); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:14px; box-shadow:0 10px 30px rgba(0,0,0,.25); }
-    .row { display:flex; gap:10px; align-items:center; margin:10px 0; flex-wrap:wrap; }
-    label { color:var(--muted); min-width:160px; }
-    select, input[type="date"] { background:#0b1020; color:var(--text); border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:8px 10px; outline:none; min-width:280px; }
-    button { background:var(--primary); color:#0b1020; border:none; border-radius:10px; padding:8px 12px; font-weight:600; cursor:pointer; transition:transform .05s ease, filter .15s ease; }
-    button:hover { filter:brightness(1.1); } button:active { transform:translateY(1px); }
-    .btn-ghost { background:transparent; color:var(--primary); border:1px solid var(--primary); }
-    .btn-alt { background:var(--primary-2); color:white; }
-    .btn-danger { background:var(--danger); color:white; }
-    .sep { height:1px; background:rgba(255,255,255,.08); margin:12px 0; }
-    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
-    .section h3 { margin:0 0 10px; font-size:16px; color:var(--accent); }
-    .item { display:flex; align-items:center; justify-content:space-between; padding:8px 10px; margin:6px 0; background:var(--chip); border:1px solid rgba(255,255,255,.08); border-radius:10px; }
-    .empty { color:var(--muted); font-style:italic; }
-    .error { color:#fecaca; background:#7f1d1d; padding:8px 10px; border-radius:10px; border:1px solid #ef4444; }
+    :root { --bg:#0f172a; --panel:#111827; --muted:#94a3b8; --text:#e5e7eb;
+            --primary:#60a5fa; --primary-2:#2563eb; --danger:#ef4444; --accent:#22d3ee; --chip:#1f2937; }
+    *{box-sizing:border-box}
+    body{margin:0;padding:16px;background:linear-gradient(180deg,var(--bg),#020617);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    h2{margin:0 0 12px;font-size:20px;letter-spacing:.2px}
+    .card{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    .row{display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap}
+    label{color:var(--muted);min-width:160px}
+    select,input[type="date"]{background:#0b1020;color:var(--text);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:8px 10px;outline:none;min-width:280px}
+    button{background:var(--primary);color:#0b1020;border:none;border-radius:10px;padding:8px 12px;font-weight:600;cursor:pointer;transition:transform .05s ease, filter .15s ease}
+    button:hover{filter:brightness(1.1)} button:active{transform:translateY(1px)}
+    .btn-ghost{background:transparent;color:var(--primary);border:1px solid var(--primary)}
+    .btn-alt{background:var(--primary-2);color:white}
+    .btn-danger{background:var(--danger);color:white}
+    .sep{height:1px;background:rgba(255,255,255,.08);margin:12px 0}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .section h3{margin:0 0 10px;font-size:16px;color:var(--accent)}
+    .item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;margin:6px 0;background:var(--chip);border:1px solid rgba(255,255,255,.08);border-radius:10px}
+    .empty{color:var(--muted);font-style:italic}
+    .error{color:#fecaca;background:#7f1d1d;padding:8px 10px;border-radius:10px;border:1px solid #ef4444}
   </style>
 </head>
 <body>
   <div class="card">
     <h2>Masquer un client</h2>
-
     <div id="errorBox" class="error" style="display:none;"></div>
 
     <div class="row">
@@ -43,8 +39,8 @@
     <div class="row">
       <label>Masquer jusqu’au :</label>
       <input type="date" id="dateInput">
-      <button class="btn-alt" onclick="maskByDate()">Masquer par date</button>
-      <button class="btn-ghost" onclick="maskUntilNext()">Jusqu’à la prochaine planification</button>
+      <button type="button" class="btn-alt"   onclick="maskByDate()">Masquer par date</button>
+      <button type="button" class="btn-ghost" onclick="maskUntilNext()">Jusqu’à la prochaine planification</button>
     </div>
 
     <div class="sep"></div>
@@ -56,110 +52,105 @@
       </div>
       <div class="section">
         <h3>Raccourcis</h3>
-        <div class="row"><button onclick="refreshUI()">🔄 Rafraîchir</button></div>
-        <div style="color:var(--muted); font-size:13px;">
+        <div class="row"><button type="button" onclick="refreshUI()">🔄 Rafraîchir</button></div>
+        <div style="color:#9ca3af;font-size:13px">
           La S+1 d’un client masqué est colorée <b>gris très foncé</b> quand les prévisions sont actives.
         </div>
       </div>
     </div>
   </div>
 
+  <!-- Injection des données pré-calculées côté serveur -->
+  <script>
+    const INITIAL = <?!= initialDataJson ?>; // objet {ok, clients, masked, ...}
+  </script>
+
   <script>
     const $ = id => document.getElementById(id);
 
     function showError(msg){
-      const box = $('errorBox');
-      box.textContent = msg;
-      box.style.display = 'block';
+      const box = $('errorBox'); if(!box) return;
+      box.textContent = msg; box.style.display = 'block';
+    }
+    function clearError(){ const b=$('errorBox'); if(b) b.style.display='none'; }
+
+    // Appel serveur robuste : teste plusieurs noms de fonctions (underscore / sans underscore)
+    function callServer(fnNames, args, onOk){
+      if (!window.google || !google.script || !google.script.run) {
+        showError('google.script.run indisponible dans cette fenêtre.'); return;
+      }
+      const names = Array.isArray(fnNames) ? fnNames : [fnNames];
+      let i = 0;
+      const tryNext = () => {
+        const name = names[i++]; if (!name) { showError('Aucune fonction serveur trouvée.'); return; }
+        try {
+          const runner = google.script.run
+            .withSuccessHandler(res => {
+              if (res && res.ok === false) { showError(res.message || 'Erreur serveur.'); return; }
+              clearError(); onOk && onOk(res);
+            })
+            .withFailureHandler(err => { showError((err && err.message) || 'Erreur Apps Script.'); });
+          if (args === undefined) runner[name](); else runner[name](args);
+        } catch(e) { tryNext(); }
+      };
+      tryNext();
     }
 
-    function renderClientsDropdown(res) {
-      const sel = $('clientSelect');
-      sel.innerHTML = '';
-      const list = (res && res.clients) || [];
-      if (!list.length) {
-        const o = document.createElement('option');
-        o.value = '';
-        o.textContent = '— Aucun client (Client Régulier) —';
-        sel.appendChild(o);
-        return;
+    function renderClientsDropdown(list) {
+      const sel = $('clientSelect'); sel.innerHTML = '';
+      if (!list || !list.length) {
+        const o = document.createElement('option'); o.value=''; o.textContent='— Aucun client (Client Régulier) —';
+        sel.appendChild(o); return;
       }
-      list.forEach(c => {
-        const o = document.createElement('option');
-        o.value = c.key; o.textContent = c.label;
-        sel.appendChild(o);
-      });
+      list.forEach(c => { const o=document.createElement('option'); o.value=c.key; o.textContent=c.label; sel.appendChild(o); });
     }
 
-    function renderMaskedList(res) {
-      const cont = $('maskedList');
-      cont.innerHTML = '';
-      const arr = (res && res.masked) || [];
-      if (!arr.length) {
-        cont.innerHTML = '<div class="empty">Aucun client masqué.</div>';
-        return;
-      }
+    function renderMaskedList(arr) {
+      const cont = $('maskedList'); cont.innerHTML = '';
+      if (!arr || !arr.length) { cont.innerHTML = '<div class="empty">Aucun client masqué.</div>'; return; }
       arr.forEach(m => {
-        const div = document.createElement('div');
-        div.className = 'item';
-        const left = document.createElement('div');
+        const div=document.createElement('div'); div.className='item';
+        const left=document.createElement('div');
         left.innerHTML = '<b>'+m.label+'</b>' + (m.untilISO ? ' <small>(jusqu’au '+m.untilISO+')</small>' : '');
-        const btn = document.createElement('button');
-        btn.className = 'btn-danger';
-        btn.textContent = 'Démasquer';
-        btn.onclick = () => google.script.run.withSuccessHandler(refreshUI).uiUnmaskClient_(m.key);
-        div.appendChild(left); div.appendChild(btn);
-        cont.appendChild(div);
+        const btn=document.createElement('button'); btn.type='button'; btn.className='btn-danger'; btn.textContent='Démasquer';
+        btn.onclick = () => callServer(['uiUnmaskClient_','uiUnmaskClient'], m.key, () => refreshUI());
+        div.appendChild(left); div.appendChild(btn); cont.appendChild(div);
       });
+    }
+
+    function hydrateFromInitial() {
+      $('dateInput').setAttribute('min', new Date().toISOString().slice(0,10));
+      if (!INITIAL || INITIAL.ok === false) { showError((INITIAL && INITIAL.message) || 'Erreur serveur.'); return; }
+      clearError();
+      renderClientsDropdown(INITIAL.clients);
+      renderMaskedList(INITIAL.masked);
     }
 
     function refreshUI() {
-      // min du calendrier = aujourd’hui
       $('dateInput').setAttribute('min', new Date().toISOString().slice(0,10));
-
-      google.script.run
-  .withSuccessHandler((res) => {
-    if (!res || res.ok === false) {
-      // Affiche l’erreur renvoyée côté serveur
-      const box = document.getElementById('errorBox');
-      if (box) { box.textContent = res && res.message ? res.message : 'Erreur serveur.'; box.style.display = 'block'; }
-      return;
+      callServer(['uiListClientsPourMasquageV2_','uiListClientsPourMasquage_'], undefined, (res) => {
+        renderClientsDropdown(res.clients);
+        renderMaskedList(res.masked);
+      });
     }
-    // ok => on masque l’erreur et on remplit le dropdown
-    const box = document.getElementById('errorBox');
-    if (box) box.style.display = 'none';
-    renderClientsDropdown(res);
-    renderMaskedList(res);
-    document.getElementById('dateInput').setAttribute('min', new Date().toISOString().slice(0,10));
-  })
-  .withFailureHandler((err) => {
-    const box = document.getElementById('errorBox');
-    if (box) { box.textContent = (err && err.message) ? err.message : 'Erreur Apps Script.'; box.style.display = 'block'; }
-  })
-  .uiListClientsPourMasquage_();
-
 
     function maskByDate() {
-      const key = $('clientSelect').value;
-      const d   = $('dateInput').value;
+      const key = $('clientSelect').value, d = $('dateInput').value;
       if (!key) return alert('Sélectionnez un client.');
       if (!d)   return alert('Choisissez une date.');
-      google.script.run.withSuccessHandler((r)=>{
-        if (!r || r.ok === false) return alert((r && r.message) || 'Erreur.');
-        refreshUI();
-      }).uiMaskClient_({key, mode:'date', dateISO:d});
+      callServer(['uiMaskClient_','uiMaskClient'], { key, mode:'date', dateISO:d }, () => refreshUI());
     }
 
     function maskUntilNext() {
       const key = $('clientSelect').value;
       if (!key) return alert('Sélectionnez un client.');
-      google.script.run.withSuccessHandler((r)=>{
-        if (!r || r.ok === false) return alert((r && r.message) || 'Erreur.');
-        refreshUI();
-      }).uiMaskClient_({key, mode:'next'});
+      callServer(['uiMaskClient_','uiMaskClient'], { key, mode:'next' }, () => refreshUI());
     }
 
-    document.addEventListener('DOMContentLoaded', refreshUI);
+    document.addEventListener('DOMContentLoaded', () => {
+      hydrateFromInitial(); // affichage instantané
+      // refreshUI();       // décommente si tu veux recharger côté serveur dès l’ouverture
+    });
   </script>
 </body>
 </html>
