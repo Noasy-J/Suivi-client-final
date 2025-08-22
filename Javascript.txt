@@ -118,6 +118,8 @@ function resurlignerApresMaj_(sheet) {
     if (isForecastEnabled_()) {
       clearPrevisionsSurFeuille_(sheet);
       appliquerPrevisionsSurFeuille_(sheet);
+      try { appliquerMasquageS1SurFeuille_(sheet /* ou sh */); } catch(_) {}
+
       try { appliquerMasquageS1SurFeuIle_(sheet); } catch(_){}
     }
     SpreadsheetApp.flush();
@@ -176,7 +178,7 @@ function endHighlightBatch_() {
 
     __HL_BUCKET.forEach(sh => {
       try {
-        // 🔧 Forcer un repeint complet sur chaque feuille du lot
+        // reset caches internes si besoin (inchangé)
         try {
           const props = PropertiesService.getDocumentProperties();
           const sid = sh.getSheetId();
@@ -184,12 +186,16 @@ function endHighlightBatch_() {
           props.deleteProperty(PROP_WEEK_BORDER_COLS_PREFIX + '_' + sid);
         } catch (_) {}
 
+        // Surbrillance + prévisions
         mettreEnValeurColonneJourSurFeuille_(sh, today);
-
         if (isForecastEnabled_()) {
           clearPrevisionsSurFeuille_(sh);
           appliquerPrevisionsSurFeuille_(sh);
-          try { appliquerMasquageS1SurFeuIle_(sheet); } catch(_){}
+          try { appliquerMasquageS1SurFeuille_(sheet /* ou sh */); } catch(_) {}
+
+
+          // ✅ AJOUT : griser S+1 pour les clients masqués
+          try { appliquerMasquageS1SurFeuille_(sh); } catch(_) {}
         }
       } catch (e) { Logger.log(e); }
     });
@@ -1613,14 +1619,23 @@ function todayMidnight_() {
 function surlignerSemaineEnCoursToutesFeuilles_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const today = todayMidnight_();
+
   [SHEET_CLIENTS, SHEET_PONCTUEL].forEach(name => {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
+
+    // Surbrillance de la semaine
     mettreEnValeurColonneJourSurFeuille_(sh, today);
+
+    // Prévisions
     if (isForecastEnabled_()) {
       clearPrevisionsSurFeuille_(sh);
       appliquerPrevisionsSurFeuille_(sh);
-      try { appliquerMasquageS1SurFeuille_(sh); } catch(_){}
+      try { appliquerMasquageS1SurFeuille_(sheet /* ou sh */); } catch(_) {}
+
+
+      // ✅ AJOUT : griser S+1 pour les clients masqués
+      try { appliquerMasquageS1SurFeuille_(sh); } catch(_) {}
     }
   });
 }
@@ -2226,6 +2241,8 @@ function appliquerPrevisionsToutesFeuilles_() {
     // on ne re-surligne pas la semaine ici : inutile et coûteux
     clearPrevisionsSurFeuille_(sh);
     appliquerPrevisionsSurFeuille_(sh);
+    try { appliquerMasquageS1SurFeuille_(sheet /* ou sh */); } catch(_) {}
+
   });
 }
 
@@ -4492,33 +4509,15 @@ function findBlockByKeyAcrossSheets_(key) {
 
 
 function masquerClientDialog() {
-  const data = uiListClientsPourMasquageV2_(); // {ok, clients, masked, ...}
-
-  const tpl =
-    HtmlService.createTemplateFromFile('masquerClient'); // ton fichier s’appelle bien masquerClient.html
+  const data = uiListClientsPourMasquageV2_();
+  const tpl  = HtmlService.createTemplateFromFile('masquerClient'); // sans .html
   tpl.initialDataJson = JSON.stringify(data);
-
   const view = tpl.evaluate()
-    .setWidth(620)
-    .setHeight(520)
-    .setSandboxMode(HtmlService.SandboxMode.IFRAME)                // ✅ force IFRAME (google.script.run dispo)
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL); // ✅ évite les blocages d’iframe
-
+    .setWidth(620).setHeight(520)
+    .setSandboxMode(HtmlService.SandboxMode.IFRAME)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   SpreadsheetApp.getUi().showModalDialog(view, 'Masquer un client');
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -4538,5 +4537,410 @@ function refreshWeekHighlightDaily_() {
 }
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/**** ===== HANDLERS SERVEUR POUR "Masquer un client" ===== ****/
+
+/** Utilitaires fallback (n’écrasent pas tes versions si elles existent) */
+var __MASK_PROP_KEY = (typeof PROP_MASKED_CLIENTS_V2 === 'undefined') ? 'MASKED_CLIENTS_V2' : PROP_MASKED_CLIENTS_V2;
+
+if (typeof todayMidnight_ !== 'function') {
+  function todayMidnight_() {
+    const tz = Session.getScriptTimeZone() || 'Europe/Paris';
+    const now = new Date();
+    const y = Utilities.formatDate(now, tz, 'yyyy');
+    const m = Utilities.formatDate(now, tz, 'MM');
+    const d = Utilities.formatDate(now, tz, 'dd');
+    return new Date(Number(y), Number(m)-1, Number(d), 0, 0, 0, 0);
+  }
+}
+
+if (typeof makeClientKey_ !== 'function') {
+  function makeClientKey_(nom, prenom, tel) {
+    const N = String(nom||'').trim().toUpperCase();
+    const P = String(prenom||'').trim();
+    const T = String(tel||'').replace(/\D/g,'');
+    return N + '|' + P + '|' + T;
+  }
+}
+
+if (typeof readMaskedMap_ !== 'function') {
+  function readMaskedMap_({purgeExpired=true}={}) {
+    const props = PropertiesService.getDocumentProperties();
+    let obj = {};
+    try { obj = JSON.parse(props.getProperty(__MASK_PROP_KEY) || '{}'); } catch(_) { obj = {}; }
+    const map = new Map(Object.entries(obj).map(([k,v]) => [k, Number(v)||0]));
+    if (purgeExpired) {
+      const todayEnd = new Date(todayMidnight_().getTime() + 24*60*60*1000 - 1);
+      let changed = false;
+      for (const [k,until] of Array.from(map.entries())) {
+        if (!until || until <= todayEnd.getTime()) { map.delete(k); changed = true; }
+      }
+      if (changed) {
+        const out = {}; map.forEach((v,k)=> out[k]=v);
+        props.setProperty(__MASK_PROP_KEY, JSON.stringify(out));
+      }
+    }
+    return map;
+  }
+}
+
+if (typeof saveMaskedMap_ !== 'function') {
+  function saveMaskedMap_(map) {
+    const props = PropertiesService.getDocumentProperties();
+    const obj = {}; map.forEach((v,k)=> obj[k]=Number(v)||0);
+    props.setProperty(__MASK_PROP_KEY, JSON.stringify(obj));
+  }
+}
+
+if (typeof getMaskedKeysSet_ !== 'function') {
+  function getMaskedKeysSet_() {
+    return new Set(Array.from(readMaskedMap_({purgeExpired:true}).keys()));
+  }
+}
+
+/** ===== 1) Liste initiale pour la modale (dropdown Régulier + liste masqués) */
+function uiListClientsPourMasquageV2_() {
+  try {
+    const SHEET_NAME_REG = (typeof SHEET_CLIENTS === 'string' ? SHEET_CLIENTS : 'Client Régulier');
+    const FIRST_ROW      = (typeof FIRST_DATA_ROW === 'number' ? FIRST_DATA_ROW : 3);
+    const BLOCK_ROWS     = (typeof NB_ROWS_BLOCK === 'number' ? NB_ROWS_BLOCK : 2);
+    const COL_TEL_IDX    = (typeof COL_TEL === 'number' ? COL_TEL : 2);
+    const tz             = Session.getScriptTimeZone() || 'Europe/Paris';
+
+    const maskedMap = readMaskedMap_({purgeExpired:true});
+    const maskedSet = new Set(Array.from(maskedMap.keys()));
+
+    const ss = SpreadsheetApp.getActive();
+    const sh = ss.getSheetByName(SHEET_NAME_REG);
+    if (!sh) return { ok:false, message:`Feuille introuvable: "${SHEET_NAME_REG}"`, clients:[], masked:[] };
+
+    const last = sh.getLastRow();
+    if (last < FIRST_ROW) return { ok:true, clients:[], masked:[], info:'Aucun client détecté (feuille vide)' };
+
+    const h = last - (FIRST_ROW - 1);
+    const A = sh.getRange(FIRST_ROW, 1,          h, 1).getDisplayValues();          // Nom / Prénom
+    const T = sh.getRange(FIRST_ROW, COL_TEL_IDX, h, 1).getDisplayValues();         // Téléphone (ligne 2)
+
+    const dropdown = [];
+    for (let r1 = FIRST_ROW; r1 + 1 <= last; r1 += BLOCK_ROWS) {
+      const nom    = (A[r1 - FIRST_ROW]?.[0] || '').trim();
+      const prenom = (A[r1 - FIRST_ROW + 1]?.[0] || '').trim();
+      const telRaw = (T[r1 - FIRST_ROW + 1]?.[0] || '').trim();
+      if (!nom && !prenom) continue;
+      const key = makeClientKey_(nom, prenom, telRaw);
+      if (maskedSet.has(key)) continue; // déjà masqué → pas dans le menu
+      dropdown.push({ key, label: `${nom || '(Sans NOM)'} ${prenom || ''}`.trim() });
+    }
+
+    // Liste des masqués (toutes feuilles) — libellé lisible si possible
+    const maskedOut = [];
+    maskedSet.forEach(key => {
+      let label = key.split('|').slice(0,2).join(' ').trim();
+      try {
+        if (typeof findBlockByKeyAcrossSheets_ === 'function') {
+          const loc = findBlockByKeyAcrossSheets_(key);
+          if (loc) {
+            const nom    = String(loc.sheet.getRange(loc.r1,   1).getDisplayValue() || '').trim();
+            const prenom = String(loc.sheet.getRange(loc.r1+1, 1).getDisplayValue() || '').trim();
+            label = `${nom || '(Sans NOM)'} ${prenom || ''}`.trim() + ' — ' + loc.sheet.getName();
+          }
+        }
+      } catch(_) {}
+      const until = maskedMap.get(key) || 0;
+      const untilISO = until ? Utilities.formatDate(new Date(until), tz, 'yyyy-MM-dd') : '';
+      maskedOut.push({ key, label, untilISO });
+    });
+
+    dropdown.sort((a,b)=>a.label.localeCompare(b.label, 'fr'));
+    maskedOut.sort((a,b)=>a.label.localeCompare(b.label, 'fr'));
+    return { ok:true, clients: dropdown, masked: maskedOut };
+  } catch (e) {
+    return { ok:false, message: (e && e.message) ? e.message : String(e), clients:[], masked:[] };
+  }
+}
+
+/** ===== 2) Masquer un client jusqu’à une date / jusqu’à la prochaine planif */
+function uiMaskClient_(payload) {
+  try {
+    const { key, mode, dateISO } = payload || {};
+    if (!key) return {ok:false, message:'Aucun client sélectionné'};
+
+    const map = readMaskedMap_({purgeExpired:true});
+    let untilMs = 0;
+
+    if (mode === 'date') {
+      if (!dateISO) return {ok:false, message:'Date manquante'};
+      const [y,m,d] = dateISO.split('-').map(n=>parseInt(n,10));
+      untilMs = new Date(y, m-1, d, 23,59,59,999).getTime(); // fin de journée
+    } else if (mode === 'next') {
+      // On essaie d’utiliser le helper si présent
+      if (typeof uiComputeNextPlanifDate_ === 'function') {
+        const r = uiComputeNextPlanifDate_(key);
+        if (!r || !r.ok) return {ok:false, message: (r && r.message) || 'Impossible de trouver la prochaine planification'};
+        const [y,m,d] = r.dateISO.split('-').map(n=>parseInt(n,10));
+        untilMs = new Date(y, m-1, d, 0,0,0,0).getTime() - 1; // veille 23:59:59
+      } else {
+        return {ok:false, message:'uiComputeNextPlanifDate_ indisponible dans ce projet.'};
+      }
+    } else {
+      return {ok:false, message:'Mode invalide'};
+    }
+
+    map.set(key, untilMs);
+    saveMaskedMap_(map);
+
+    // Repeindre (si dispo) pour voir le gris tout de suite
+    try { if (typeof surlignerSemaineEnCoursToutesFeuilles_ === 'function') surlignerSemaineEnCoursToutesFeuilles_(); } catch(_){}
+    return { ok:true, data: (typeof uiListClientsPourMasquageV2_ === 'function' ? uiListClientsPourMasquageV2_() : null) };
+  } catch (e) {
+    return { ok:false, message: (e && e.message) ? e.message : String(e) };
+  }
+}
+
+/** ===== 3) Démasquer un client */
+function uiUnmaskClient_(key) {
+  try {
+    const map = readMaskedMap_({purgeExpired:false});
+    map.delete(key);
+    saveMaskedMap_(map);
+    try { if (typeof surlignerSemaineEnCoursToutesFeuilles_ === 'function') surlignerSemaineEnCoursToutesFeuilles_(); } catch(_){}
+    return { ok:true, data: (typeof uiListClientsPourMasquageV2_ === 'function' ? uiListClientsPourMasquageV2_() : null) };
+  } catch (e) {
+    return { ok:false, message: (e && e.message) ? e.message : String(e) };
+  }
+}
+
+
+
+/**** ====== MASQUAGE — HANDLERS SERVEUR (v1, noms uniques) ====== ****/
+
+// --- Fallbacks sûrs (n’écrasent rien si déjà défini)
+var __MASK_PROP_KEY = (typeof PROP_MASKED_CLIENTS_V2 === 'undefined') ? 'MASKED_CLIENTS_V2' : PROP_MASKED_CLIENTS_V2;
+function __tz__() { return Session.getScriptTimeZone() || 'Europe/Paris'; }
+
+if (typeof todayMidnight_ !== 'function') {
+  function todayMidnight_() {
+    const tz = __tz__(), now = new Date();
+    const y = +Utilities.formatDate(now, tz, 'yyyy'), m = +Utilities.formatDate(now, tz, 'MM'), d = +Utilities.formatDate(now, tz, 'dd');
+    return new Date(y, m-1, d, 0,0,0,0);
+  }
+}
+if (typeof makeClientKey_ !== 'function') {
+  function makeClientKey_(nom, prenom, tel) {
+    return String(nom||'').trim().toUpperCase() + '|' + String(prenom||'').trim() + '|' + String(tel||'').replace(/\D/g,'');
+  }
+}
+if (typeof readMaskedMap_ !== 'function') {
+  function readMaskedMap_({purgeExpired=true}={}) {
+    const props = PropertiesService.getDocumentProperties();
+    let obj={}; try { obj = JSON.parse(props.getProperty(__MASK_PROP_KEY) || '{}'); } catch(_){ obj={}; }
+    const map = new Map(Object.entries(obj).map(([k,v])=>[k, Number(v)||0]));
+    if (purgeExpired) {
+      const todayEnd = new Date(todayMidnight_().getTime() + 24*60*60*1000 - 1);
+      let changed=false;
+      for (const [k,until] of Array.from(map.entries())) {
+        if (!until || until <= todayEnd.getTime()) { map.delete(k); changed=true; }
+      }
+      if (changed) {
+        const out={}; map.forEach((v,k)=>out[k]=v);
+        props.setProperty(__MASK_PROP_KEY, JSON.stringify(out));
+      }
+    }
+    return map;
+  }
+}
+if (typeof saveMaskedMap_ !== 'function') {
+  function saveMaskedMap_(map) {
+    const out={}; map.forEach((v,k)=>out[k]=Number(v)||0);
+    PropertiesService.getDocumentProperties().setProperty(__MASK_PROP_KEY, JSON.stringify(out));
+  }
+}
+if (typeof getMaskedKeysSet_ !== 'function') {
+  function getMaskedKeysSet_(){ return new Set(Array.from(readMaskedMap_({purgeExpired:true}).keys())); }
+}
+
+// --- LECTURE “Client Régulier” pour le dropdown (zéro dépendance externe)
+function masq_ui_list_v1() {
+  try {
+    const SHEET_NAME_REG = (typeof SHEET_CLIENTS === 'string' ? SHEET_CLIENTS : 'Client Régulier');
+    const FIRST_ROW      = (typeof FIRST_DATA_ROW === 'number' ? FIRST_DATA_ROW : 3);
+    const BLOCK_ROWS     = (typeof NB_ROWS_BLOCK === 'number' ? NB_ROWS_BLOCK : 2);
+    const COL_TEL_IDX    = (typeof COL_TEL === 'number' ? COL_TEL : 2);
+    const tz             = __tz__();
+
+    const maskedMap = readMaskedMap_({purgeExpired:true});
+    const maskedSet = new Set(Array.from(maskedMap.keys()));
+
+    const ss = SpreadsheetApp.getActive();
+    const sh = ss.getSheetByName(SHEET_NAME_REG);
+    if (!sh) return { ok:false, message:`Feuille introuvable: "${SHEET_NAME_REG}"`, clients:[], masked:[] };
+
+    const last = sh.getLastRow();
+    if (last < FIRST_ROW) return { ok:true, clients:[], masked:[], info:'Aucun client détecté (feuille vide)' };
+
+    const h = last - (FIRST_ROW - 1);
+    const A = sh.getRange(FIRST_ROW, 1,           h, 1).getDisplayValues();          // Nom/Prénom (col A)
+    const T = sh.getRange(FIRST_ROW, COL_TEL_IDX, h, 1).getDisplayValues();          // Tél (ligne 2 de chaque bloc)
+
+    const clients = [];
+    for (let r1 = FIRST_ROW; r1 + 1 <= last; r1 += BLOCK_ROWS) {
+      const nom    = (A[r1 - FIRST_ROW]?.[0] || '').trim();
+      const prenom = (A[r1 - FIRST_ROW + 1]?.[0] || '').trim();
+      const telRaw = (T[r1 - FIRST_ROW + 1]?.[0] || '').trim();
+      if (!nom && !prenom) continue;
+      const key = makeClientKey_(nom, prenom, telRaw);
+      if (maskedSet.has(key)) continue; // exclure si déjà masqué
+      clients.push({ key, label: `${nom || '(Sans NOM)'} ${prenom || ''}`.trim() });
+    }
+
+    // liste des masqués (toutes feuilles) → label lisible si possible
+    const masked = [];
+    maskedSet.forEach(key => {
+      let label = key.split('|').slice(0,2).join(' ').trim();
+      try {
+        if (typeof findBlockByKeyAcrossSheets_ === 'function') {
+          const loc = findBlockByKeyAcrossSheets_(key);
+          if (loc) {
+            const nom    = String(loc.sheet.getRange(loc.r1,   1).getDisplayValue() || '').trim();
+            const prenom = String(loc.sheet.getRange(loc.r1+1, 1).getDisplayValue() || '').trim();
+            label = `${nom || '(Sans NOM)'} ${prenom || ''}`.trim() + ' — ' + loc.sheet.getName();
+          }
+        }
+      } catch(_){}
+      const until = maskedMap.get(key) || 0;
+      const untilISO = until ? Utilities.formatDate(new Date(until), tz, 'yyyy-MM-dd') : '';
+      masked.push({ key, label, untilISO });
+    });
+
+    clients.sort((a,b)=>a.label.localeCompare(b.label, 'fr'));
+    masked.sort((a,b)=>a.label.localeCompare(b.label, 'fr'));
+
+    return { ok:true, clients, masked };
+  } catch (e) {
+    return { ok:false, message: (e && e.message) ? e.message : String(e), clients:[], masked:[] };
+  }
+}
+
+// --- Masquage
+function masq_ui_mask_v1(payload) {
+  try {
+    const { key, mode, dateISO } = payload || {};
+    if (!key) return {ok:false, message:'Aucun client sélectionné'};
+
+    const map = readMaskedMap_({purgeExpired:true});
+    let untilMs = 0;
+
+    if (mode === 'date') {
+      if (!dateISO) return {ok:false, message:'Date manquante'};
+      const [y,m,d] = dateISO.split('-').map(n=>parseInt(n,10));
+      untilMs = new Date(y, m-1, d, 23,59,59,999).getTime(); // fin de journée
+    } else if (mode === 'next') {
+      if (typeof uiComputeNextPlanifDate_ === 'function') {
+        const r = uiComputeNextPlanifDate_(key);
+        if (!r || !r.ok) return {ok:false, message: (r && r.message) || 'Impossible de trouver la prochaine planification'};
+        const [y,m,d] = r.dateISO.split('-').map(n=>parseInt(n,10));
+        untilMs = new Date(y, m-1, d, 0,0,0,0).getTime() - 1; // veille 23:59:59
+      } else {
+        return {ok:false, message:'uiComputeNextPlanifDate_ indisponible dans ce projet.'};
+      }
+    } else {
+      return {ok:false, message:'Mode invalide'};
+    }
+
+    map.set(key, untilMs);
+    saveMaskedMap_(map);
+
+    try {
+      if (typeof surlignerSemaineEnCoursToutesFeuilles_ === 'function') surlignerSemaineEnCoursToutesFeuilles_();
+    } catch(_){}
+
+    return { ok:true, data: masq_ui_list_v1() };
+  } catch (e) {
+    return { ok:false, message: (e && e.message) ? e.message : String(e) };
+  }
+}
+
+// --- Démasquage
+function masq_ui_unmask_v1(key) {
+  try {
+    const map = readMaskedMap_({purgeExpired:false});
+    map.delete(key);
+    saveMaskedMap_(map);
+    try {
+      if (typeof surlignerSemaineEnCoursToutesFeuilles_ === 'function') surlignerSemaineEnCoursToutesFeuilles_();
+    } catch(_){}
+    return { ok:true, data: masq_ui_list_v1() };
+  } catch (e) {
+    return { ok:false, message: (e && e.message) ? e.message : String(e) };
+  }
+}
+
+// --- Ouvrir la modale (IFRAME + injection des données)
+function masquerClientDialog() {
+  const data = masq_ui_list_v1();
+  let tpl;
+  try { tpl = HtmlService.createTemplateFromFile('masquerClient'); }
+  catch(_){ tpl = HtmlService.createTemplateFromFile('masquerClient.html'); }
+  tpl.initialDataJson = JSON.stringify(data);
+  const view = tpl.evaluate()
+    .setWidth(620).setHeight(520)
+    .setSandboxMode(HtmlService.SandboxMode.IFRAME)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  SpreadsheetApp.getUi().showModalDialog(view, 'Masquer un client');
+}
+
+/** Compat: met le flag prévisions à ON/OFF sans casser ton code existant */
+function __setForecastEnabledCompat_(enabled) {
+  if (typeof setForecastEnabled_ === 'function') {
+    setForecastEnabled_(enabled);                        // ta version si elle existe
+  } else {
+    PropertiesService.getDocumentProperties()            // fallback simple
+      .setProperty('FORECAST_ENABLED', enabled ? '1' : '0');
+  }
+}
+
+/** Repaint complet des 2 feuilles : surbrillance semaine, prévisions, puis MASQUAGE S+1 */
+function repaintForecastAndMasksAll_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = (typeof todayMidnight_ === 'function') ? todayMidnight_() : new Date(new Date().setHours(0,0,0,0));
+  [SHEET_CLIENTS, SHEET_PONCTUEL].forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    try { mettreEnValeurColonneJourSurFeuille_(sh, today); } catch(_) {}
+    if (typeof isForecastEnabled_ === 'function' ? isForecastEnabled_() : true) {
+      try { clearPrevisionsSurFeuille_(sh); } catch(_) {}
+      try { appliquerPrevisionsSurFeuille_(sh); } catch(_) {}
+      try { appliquerMasquageS1SurFeuille_(sheet /* ou sh */); } catch(_) {}
+
+      try { appliquerMasquageS1SurFeuille_(sh); } catch(_) {} // ⬅️ le gris très foncé sur S+1 des masqués
+    }
+  });
+  SpreadsheetApp.flush();
+}
+
+/** À câbler sur le menu “Activer les prévisions” */
+function menuActiverPrevisions_v2() {
+  __setForecastEnabledCompat_(true);
+  repaintForecastAndMasksAll_();
+}
 
 
