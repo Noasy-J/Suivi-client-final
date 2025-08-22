@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    :root{ --primary:#ef4444; --accent:#f59e0b; --bg:#ffffff; --border:#e5e7eb; --text:#0f172a; --muted:#475569; }
+    *{box-sizing:border-box}
+    html,body{
+      margin:0;padding:0;overflow-x:hidden;
+      background:linear-gradient(180deg,#fff7ed,#fff);
+      font-family:Inter,Arial,system-ui,sans-serif;color:var(--text);
+    }
+    .card{
+      width:100%;max-width:520px;margin:0 auto;border:1px solid var(--border);
+      border-radius:16px;background:var(--bg);box-shadow:0 10px 30px rgba(2,6,23,.08);overflow:hidden;
+    }
+    .card::before{content:"";display:block;height:8px;background:linear-gradient(135deg,var(--primary),var(--accent));}
+    .wrap{padding:20px 22px;}
+    .row{display:grid;gap:14px;margin-top:10px;}
+    label{font-size:14px;color:var(--muted);font-weight:700;}
+    select{
+      width:100%;height:50px;padding:12px 14px;border:1px solid var(--border);
+      border-radius:12px;background:#fff;font-size:16px;outline:none;
+      transition:border-color .15s, box-shadow .15s;
+    }
+    select:focus{border-color:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.18);}
+    .hint{
+      font-size:13px;color:#b91c1c;background:#fff1f2;border:1px solid #fecdd3;
+      padding:10px 12px;border-radius:12px;
+    }
+    .actions{display:flex;gap:14px;margin-top:18px;}
+    .btn{flex:1;height:46px;border:none;border-radius:12px;cursor:pointer;font-weight:800;font-size:15px;}
+    .btn-danger{background:linear-gradient(135deg,#ef4444,#f97316);color:#fff;}
+    .btn-ghost{background:#eef2f7;color:#0f172a;}
+    .btn[disabled]{opacity:.6;cursor:not-allowed;}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="wrap">
+      <div class="hint">Cette action est définitive. Vérifiez le nom avant de confirmer.</div>
+
+      <div class="row">
+        <label for="selectClient">Choisir un client</label>
+        <select id="selectClient" name="selectClient">
+          <option value="">-- Choisir un client --</option>
+        </select>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-danger" id="btnDel" onclick="supprimer()">Supprimer</button>
+        <button class="btn btn-ghost" id="btnCancel" onclick="google.script.host.close()">Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('keydown', e => { if (e.key === 'Enter') e.preventDefault(); });
+
+    function remplirListeClients(liste) {
+      const select = document.getElementById('selectClient');
+      liste.forEach(nom => {
+        const opt = document.createElement('option');
+        opt.value = nom;
+        opt.textContent = nom;
+        select.appendChild(opt);
+      });
+    }
+    google.script.run.withSuccessHandler(remplirListeClients).getListeClientsTous();
+
+    let isDeleting = false;
+
+    function supprimer() {
+      if (isDeleting) return;
+
+      const select = document.getElementById('selectClient');
+      const nom = select.value;
+      if (!nom) { alert('Veuillez choisir un client à supprimer.'); return; }
+
+      const btnDel = document.getElementById('btnDel');
+      const btnCancel = document.getElementById('btnCancel');
+      const oldLabel = btnDel.textContent;
+
+      btnDel.disabled = true;
+      btnCancel.disabled = true;
+
+      if (!confirm("Voulez-vous vraiment supprimer " + nom + " ?")) {
+        btnDel.disabled = false;
+        btnCancel.disabled = false;
+        return;
+      }
+
+      isDeleting = true;
+      btnDel.textContent = "Suppression…";
+
+      google.script.run
+        .withSuccessHandler(() => google.script.host.close())
+        .withFailureHandler(err => {
+          alert('Erreur: ' + err.message);
+          isDeleting = false;
+          btnDel.disabled = false;
+          btnCancel.disabled = false;
+          btnDel.textContent = oldLabel;
+        })
+        .supprimerClientTous(nom);
+    }
+  </script>
+</body>
+</html>

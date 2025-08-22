@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Listing téléphonique (priorisé)</title>
+  <style>
+    html,body{margin:0;font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#0f172a;background:#f6f7fb}
+    .wrap{max-width:1060px;margin:16px auto;padding:0 12px}
+    .toolbar{display:flex;gap:8px;align-items:center;margin:0 0 10px}
+    .toolbar h2{margin:0;font-size:16px}
+    .spacer{flex:1}
+    button{height:36px;padding:0 12px;border:1px solid #d1d5db;border-radius:8px;background:#fff;cursor:pointer;font-weight:600}
+    button.primary{background:#1a73e8;color:#fff;border-color:#1a73e8}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .panel{background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden}
+    .topline{height:4px;background:#1a73e8}
+    .frame{max-height:620px;overflow:auto;padding:12px;min-height:120px;position:relative}
+    .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#475569}
+    .err{padding:12px;background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;color:#9f1239}
+
+    /* styles internes à la liste (cohérents avec l’export) */
+    .listing{width:100%;border-collapse:collapse}
+    .listing th,.listing td{border:1px solid #e5e7eb;padding:8px 10px;text-align:left;vertical-align:middle}
+    .listing thead th{background:#f7f7f7;font-weight:700}
+    .center{text-align:center}
+    .tel{font-weight:700;text-align:center;background:#E8F5E9}
+    .meta{margin:6px 0 10px;color:#475569;font-size:13px}
+    .legend{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:#475569}
+    .dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:6px}
+    .section th{font-weight:700;text-align:center;border-color:#8B8B8B}
+
+    @media print{
+      .toolbar{display:none}
+      .frame{max-height:none;overflow:visible}
+      .listing thead th{background:#f0f0f0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .tel{background:#E8F5E9;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="toolbar">
+      <h2>📞 Listing téléphonique (priorisé)</h2>
+      <div class="spacer"></div>
+      <button id="btnPdf" class="primary" disabled>Exporter en PDF <span id="spinPdf" style="display:none">⏳</span></button>
+      <button id="btnOpen" disabled>Ouvrir en page HTML <span id="spinOpen" style="display:none">⏳</span></button>
+      <button id="btnClose">Fermer</button>
+    </div>
+
+    <div class="panel">
+      <div class="topline"></div>
+      <div class="frame" id="frame">
+        <div class="loading" id="loading">Chargement du listing…</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      'use strict';
+
+      const $ = id => document.getElementById(id);
+      let BUSY = false;
+
+      function setBusy(b){
+        BUSY = b;
+        ['btnPdf','btnOpen','btnClose'].forEach(id=>{
+          const el = $(id);
+          if(!el) return;
+          const locked = el.dataset.locked === '1';
+          el.disabled = b || locked;
+        });
+        $('spinPdf').style.display = b ? 'inline' : 'none';
+        $('spinOpen').style.display = b ? 'inline' : 'none';
+      }
+
+      function closeDialog(){
+        if (BUSY) return;
+        try { google.script.host.close(); } catch(_) {}
+      }
+
+      function loadListing(){
+        // Verrouille PDF/HTML tant que le listing n'est pas prêt
+        $('btnPdf').dataset.locked = '1';
+        $('btnOpen').dataset.locked = '1';
+
+        google.script.run
+          .withSuccessHandler(function(html){
+            $('frame').innerHTML = html || '<div class="err">Listing vide.</div>';
+            // Déverrouille les boutons
+            $('btnPdf').dataset.locked = '0';
+            $('btnOpen').dataset.locked = '0';
+            $('btnPdf').disabled = false;
+            $('btnOpen').disabled = false;
+          })
+          .withFailureHandler(function(err){
+            const msg = (err && err.message) ? err.message : String(err);
+            $('frame').innerHTML = '<div class="err">Erreur de chargement : ' + msg + '</div>';
+          })
+          .getListingPrevisionsHtmlFragment();
+      }
+
+      function downloadPdf(){
+        if (BUSY) return;
+        const btn = $('btnPdf');
+        if (btn.dataset.locked === '1') return;
+
+        const html = $('frame').innerHTML || '';
+        if (!html.trim()){
+          alert('Rien à exporter.');
+          return;
+        }
+
+        setBusy(true);
+        google.script.run
+          .withSuccessHandler(function(res){
+            setBusy(false);
+            if (res && res.url) window.open(res.url, '_blank');
+            else alert("PDF créé, mais pas d'URL renvoyée.");
+          })
+          .withFailureHandler(function(err){
+            setBusy(false);
+            const msg = (err && err.message) ? err.message : String(err);
+            alert('Erreur export PDF : ' + msg);
+          })
+          .exportListingPrevisionsPdfFromHtml(html);
+      }
+
+      function openStandalone(){
+        if (BUSY) return;
+        const btn = $('btnOpen');
+        if (btn.dataset.locked === '1') return;
+
+        const html = $('frame').innerHTML || '';
+        if (!html.trim()){
+          alert('Rien à afficher.');
+          return;
+        }
+
+        const w = window.open('', '_blank');
+        if (!w){ alert('Pop-up bloquée. Autorisez les fenêtres pop-up et réessayez.'); return; }
+
+        const fav = 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ctext%20x%3D%2250%25%22%20y%3D%2250%25%22%20dominant-baseline%3D%22central%22%20text-anchor%3D%22middle%22%20font-size%3D%2252%22%3E%F0%9F%93%9E%3C/text%3E%3C/svg%3E';
+
+        w.document.open();
+        w.document.write(
+          '<!DOCTYPE html><html><head>' +
+          '<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+          '<title>📞 Listing téléphonique (priorisé)</title>' +
+          '<link rel="icon" type="image/svg+xml" sizes="any" href="'+fav+'">' +
+          '<link rel="shortcut icon" type="image/svg+xml" href="'+fav+'">' +
+          '<link rel="apple-touch-icon" href="'+fav+'">' +
+          '<style>' +
+            'body{margin:12px;font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#0f172a}' +
+            '.listing{width:100%;border-collapse:collapse}' +
+            '.listing th,.listing td{border:1px solid #e5e7eb;padding:8px 10px;text-align:left;vertical-align:middle}' +
+            '.listing thead th{background:#f7f7f7;font-weight:700}' +
+            '.center{text-align:center}.tel{font-weight:700;text-align:center;background:#E8F5E9}' +
+            '.meta{margin:6px 0 10px;color:#475569;font-size:13px}' +
+            '.legend{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:#475569}' +
+            '.dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:6px}' +
+            '.section th{font-weight:700;text-align:center;border-color:#8B8B8B}' +
+            '@media print{.listing thead th{background:#f0f0f0;-webkit-print-color-adjust:exact;print-color-adjust:exact}.tel{background:#E8F5E9;-webkit-print-color-adjust:exact;print-color-adjust:exact}}' +
+          '</style>' +
+          '</head><body>' + html + '</body></html>'
+        );
+        w.document.close();
+      }
+
+      // Brancher les boutons
+      $('btnClose').addEventListener('click', closeDialog);
+      $('btnPdf').addEventListener('click', downloadPdf);
+      $('btnOpen').addEventListener('click', openStandalone);
+
+      // Lancer le chargement asynchrone
+      document.addEventListener('DOMContentLoaded', loadListing);
+    })();
+  </script>
+</body>
+</html>

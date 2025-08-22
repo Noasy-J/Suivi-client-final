@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    :root{
+      --primary:#6366f1; --accent:#22c55e; --green:#16a34a; --red:#dc2626;
+      --bg:#ffffff; --border:#e5e7eb; --text:#0f172a; --muted:#475569;
+    }
+    *{box-sizing:border-box}
+    html,body{
+      margin:0;padding:0;overflow-x:hidden;
+      background:linear-gradient(180deg,#eef2ff,#fff);
+      font-family:Inter,Arial,system-ui,sans-serif;color:var(--text);
+    }
+    .card{
+      width:100%;max-width:640px;margin:0 auto;border:1px solid var(--border);
+      border-radius:16px;background:var(--bg);box-shadow:0 10px 30px rgba(2,6,23,.08);overflow:hidden;
+    }
+    .card::before{content:"";display:block;height:8px;background:linear-gradient(135deg,var(--primary),var(--accent));}
+    .wrap{padding:20px 22px;}
+    .row{display:grid;grid-template-columns:1fr;gap:14px;margin-top:10px;}
+    .row.two{grid-template-columns:1fr 1fr;gap:14px;}
+    label{font-size:14px;color:var(--muted);font-weight:700;}
+    input,select{
+      width:100%;height:50px;padding:12px 14px;border:1px solid var(--border);
+      border-radius:12px;background:#fff;font-size:16px;outline:none;
+      transition:border-color .15s, box-shadow .15s;
+    }
+    input:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(99,102,241,.18);}
+    .actions{display:flex;gap:14px;margin-top:18px;}
+    .btn{flex:1;height:46px;border:none;border-radius:12px;cursor:pointer;font-weight:800;font-size:15px;}
+    .btn-primary{background:linear-gradient(135deg,var(--green),#22c55e);color:#fff;}
+    .btn-primary[disabled]{opacity:.6;cursor:not-allowed;}
+    .btn-ghost{background:#eef2f7;color:#0f172a;}
+    .error{color:var(--red);font-size:13px;display:none;margin-top:-6px;}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="wrap">
+      <div class="row">
+        <div>
+          <label for="clientSelect">Nom complet du client à modifier</label>
+          <select id="clientSelect" name="clientSelect" onchange="chargerClient()">
+            <option value="">-- Choisir un client --</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row two">
+        <div>
+          <label for="nom">NOM</label>
+          <input type="text" id="nom" name="nom" required autocomplete="off" disabled>
+        </div>
+        <div>
+          <label for="prenom">Prénom</label>
+          <input type="text" id="prenom" name="prenom" required autocomplete="off" disabled>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="tel">Numéro de téléphone (facultatif)</label>
+          <input type="text" id="tel" name="tel" placeholder="0601020304" autocomplete="off" disabled>
+          <div id="telError" class="error">Le numéro doit contenir exactement 10 chiffres.</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="contrat">Type de contrat (facultatif)</label>
+          <select id="contrat" name="contrat" disabled>
+            <option value="">-- Sélectionner --</option>
+            <option>1H / Semaine</option>
+            <option>2H / Semaine</option>
+            <option>3H / Semaine</option>
+            <option>4H / Semaine</option>
+            <option>1H / 15J</option>
+            <option>2H / 15J</option>
+            <option>3H / 15J</option>
+            <option>4H / 15J</option>
+            <option>1H / Mois</option>
+            <option>2H / Mois</option>
+            <option>3H / Mois</option>
+            <option>4H / Mois</option>
+            <option>PONCTUEL</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary" id="btnModif" onclick="modifier()" disabled>Modifier</button>
+        <button class="btn btn-ghost" onclick="google.script.host.close()">Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function onLoad() {
+      google.script.run.withSuccessHandler(remplirListeClients).getListeClientsTous();
+    }
+
+    function remplirListeClients(clients) {
+      const select = document.getElementById('clientSelect');
+      clients.forEach(client => {
+        const option = document.createElement('option');
+        option.value = client;
+        option.textContent = client;
+        select.appendChild(option);
+      });
+    }
+
+    function chargerClient() {
+      const nomComplet = document.getElementById('clientSelect').value;
+      const inputs = ['nom', 'prenom', 'tel', 'contrat'];
+      if (!nomComplet) {
+        inputs.forEach(id => { const el = document.getElementById(id); el.value = ''; el.disabled = true; });
+        document.getElementById('btnModif').disabled = true;
+        return;
+      }
+      google.script.run.withSuccessHandler(remplirChamps).getClientDataTous(nomComplet);
+    }
+
+    function remplirChamps(data) {
+      if (!data) { alert("Impossible de charger ce client."); return; }
+      document.getElementById('nom').value = data.nom || '';
+      document.getElementById('prenom').value = data.prenom || '';
+      document.getElementById('tel').value = data.tel || '';
+      document.getElementById('contrat').value = data.contrat || '';
+      ['nom', 'prenom', 'tel', 'contrat'].forEach(id => document.getElementById(id).disabled = false);
+      document.getElementById('btnModif').disabled = false;
+    }
+
+    document.getElementById('tel').addEventListener('input', function() {
+      const digits = this.value.replace(/\D/g, '');
+      const showError = (this.value.trim() !== '' && digits.length !== 10);
+      document.getElementById('telError').style.display = showError ? 'block' : 'none';
+    });
+
+    function modifier() {
+      const btn = document.getElementById('btnModif');
+      const nom = document.getElementById('nom').value.trim();
+      const prenom = document.getElementById('prenom').value.trim();
+      const telRaw = document.getElementById('tel').value.trim();
+      const digits = telRaw.replace(/\D/g, '');
+
+      if (!nom) return alert('Le champ NOM est obligatoire.');
+      if (!prenom) return alert('Le champ Prénom est obligatoire.');
+      if (telRaw !== '' && digits.length !== 10) {
+        document.getElementById('telError').style.display = 'block';
+        alert('Le numéro de téléphone doit contenir exactement 10 chiffres (ex. 0601020304).');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = "Modification en cours…";
+
+      const data = {
+        oldNom: document.getElementById('clientSelect').value,
+        nom, prenom, tel: telRaw, contrat: document.getElementById('contrat').value
+      };
+
+      google.script.run
+        .withSuccessHandler(() => google.script.host.close())
+        .withFailureHandler(err => { alert('Erreur: ' + err.message); btn.disabled = false; btn.textContent = "Modifier"; })
+        .modifierClient(data);
+    }
+
+    window.onload = onLoad;
+  </script>
+</body>
+</html>

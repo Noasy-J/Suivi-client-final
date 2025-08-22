@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>🚛 Synthèse – Transports mensuels</title>
+  <style>
+    :root{
+      --primary:#0ea5e9; --primary-700:#0284c7;
+      --bg:#f1f5f9; --card:#ffffff; --text:#0f172a; --sub:#475569;
+      --border:#e2e8f0; --thead:#f8fafc; --accent:#16a34a;
+    }
+    html,body{background:var(--bg); color:var(--text); font-family:Arial,Helvetica,sans-serif; margin:0}
+    .wrap{padding:16px}
+    .titlebar{
+      background:linear-gradient(90deg, var(--primary), #5eead4);
+      color:#fff; padding:14px 16px; font-weight:700; letter-spacing:.2px;
+      display:flex; align-items:center; gap:10px; font-size:16px;
+      box-shadow:0 2px 12px rgba(2,132,199,.25);
+    }
+    .card{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px; box-shadow:0 2px 8px rgba(15,23,42,.04)}
+    .row{display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:10px}
+    label{font-size:13px; color:#334155; display:flex; flex-direction:column; gap:6px}
+    select,input{padding:8px 10px; font-size:14px; border:1px solid var(--border); border-radius:10px; background:#fff; min-width:160px}
+    .btns{display:flex; gap:10px; flex-wrap:wrap}
+    button{padding:9px 14px; font-size:14px; border-radius:10px; border:0; cursor:pointer; transition:.15s transform, .2s opacity}
+    button:disabled{opacity:.6; cursor:not-allowed; transform:none}
+    .primary{background:var(--primary); color:#fff}
+    .primary:hover{background:var(--primary-700)}
+    .ghost{background:#e2e8f0}
+    .status{display:flex; align-items:center; gap:8px; color:var(--sub); font-size:13px; margin:6px 0 10px}
+    .spinner{display:inline-block; width:14px; height:14px; border:2px solid #cbd5e1; border-top-color:var(--primary); border-radius:50%; animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    .moisTitle{font-size:18px; margin-bottom:2px}
+    .meta{color:var(--sub); font-size:13px; margin:6px 0 10px}
+
+    .tableWrap{max-height:52vh; overflow:auto; border-radius:10px}
+    table.syn{width:100%; border-collapse:collapse; background:#fff}
+    table.syn th, table.syn td{border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:middle}
+    table.syn thead th{background:var(--thead); font-weight:700; user-select:none}
+    table.syn td.num{text-align:center; font-weight:600}
+    table.syn td.num.ok{color:var(--accent); font-weight:700}
+    tfoot tr.tfoot{position:sticky; bottom:0; background:#fff}
+    .badge{display:inline-block; padding:.15rem .5rem; border-radius:999px; font-size:12px; font-weight:600; line-height:1; border:1px solid transparent}
+    .badge-ponctuel{background:rgba(245,158,11,.12); color:#92400e; border-color:rgba(245,158,11,.3)}
+    .badge-regulier{background:rgba(59,130,246,.12); color:#1e40af; border-color:rgba(59,130,246,.3)}
+    .empty{color:var(--sub); font-size:13px; padding:8px 0}
+  </style>
+
+  <!-- Injecte le favicon 🚛 aussi dans la boîte de dialogue (si le conteneur l’autorise) -->
+  <script>
+    (function(){
+      try{
+        var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="52">🚛</text></svg>';
+        var data = 'data:image/svg+xml,' + encodeURIComponent(svg);
+        ['icon','shortcut icon','apple-touch-icon'].forEach(function(rel){
+          var l=document.createElement('link');
+          l.rel=rel; l.type=(rel==='apple-touch-icon'?'': 'image/svg+xml'); l.href=data;
+          document.head.appendChild(l);
+        });
+      }catch(_){}
+    })();
+  </script>
+</head>
+<body>
+  <div class="titlebar">🚛 Synthèse – Transports mensuels</div>
+  <div class="wrap">
+    <div class="card">
+      <div class="row">
+        <label>Mois
+          <select id="mois">
+            <option value="1">Janvier</option><option value="2">Février</option>
+            <option value="3">Mars</option><option value="4">Avril</option>
+            <option value="5">Mai</option><option value="6">Juin</option>
+            <option value="7">Juillet</option><option value="8">Août</option>
+            <option value="9">Septembre</option><option value="10">Octobre</option>
+            <option value="11">Novembre</option><option value="12">Décembre</option>
+          </select>
+        </label>
+        <label>Année
+          <input id="annee" type="number" min="2000" max="2100" />
+        </label>
+
+        <div class="btns">
+          <button id="btn-gen" class="primary" type="button">Générer</button>
+          <button id="btn-open" class="ghost"   type="button">Ouvrir dans navigateur</button>
+          <button id="btn-pdf"  class="ghost"   type="button">Exporter PDF</button>
+        </div>
+      </div>
+
+      <div id="status" class="status" style="display:none">
+        <span class="spinner"></span><span id="status-text">Génération en cours…</span>
+      </div>
+
+      <div id="content"><div class="empty">Choisis un mois/année, puis clique <b>Générer</b>.<br>Le tableau sera trié <b>A → Z</b> par nom de client.</div></div>
+    </div>
+  </div>
+
+  <script>
+  const defaults = <?!= JSON.stringify(defaults) ?>;
+
+  const selMois   = document.getElementById('mois');
+  const inpAnnee  = document.getElementById('annee');
+  const btnGen    = document.getElementById('btn-gen');
+  const btnOpen   = document.getElementById('btn-open');
+  const btnPdf    = document.getElementById('btn-pdf');
+  const statusBox = document.getElementById('status');
+  const statusTxt = document.getElementById('status-text');
+  const content   = document.getElementById('content');
+
+  // --- Helpers état ---
+  function opts(){ return { mois:Number(selMois.value), annee:Number(inpAnnee.value) }; }
+  function hasGenerated(){ return !!content.querySelector('#synTable'); } // table rendue
+  function refreshOpenAvailability(){ btnOpen.disabled = !hasGenerated(); }
+
+  function setBusy(on, msg){
+    btnGen.disabled = btnPdf.disabled = !!on;
+    // IMPORTANT : on ne désactive PAS btnOpen ici pour permettre l’ouverture instantanée
+    if (msg) statusTxt.textContent = msg;
+    statusBox.style.display = on ? 'flex' : 'none';
+  }
+
+  // --- Au chargement : valeurs par défaut + état bouton Ouvrir ---
+  window.addEventListener('DOMContentLoaded', () => {
+    try {
+      if (defaults && Number.isFinite(+defaults.mois))  selMois.value = String(+defaults.mois);
+      if (defaults && Number.isFinite(+defaults.annee)) inpAnnee.value = String(+defaults.annee);
+    } catch(_) {}
+    refreshOpenAvailability();
+  });
+
+  // --- Génération (serveur) ---
+  function generate(){
+    const o = opts();
+    setBusy(true, 'Génération en cours…');
+    google.script.run
+      .withSuccessHandler(html => {
+        content.innerHTML = html;   // le fragment est déjà trié A→Z côté serveur
+        setBusy(false);
+        refreshOpenAvailability();  // on peut maintenant ouvrir instantanément
+      })
+      .withFailureHandler(err => {
+        setBusy(false);
+        alert('Erreur : ' + (err && err.message ? err.message : err));
+      })
+      .getSyntheseHtmlFragment(o);
+  }
+
+  // --- Ouverture 100% instant (mêmes styles + favicon + titre) ---
+  function openInBrowser(){
+    if (!document.querySelector('#synTable')) {
+      alert('Génère d’abord la synthèse (bouton "Générer").');
+      return;
+    }
+
+    // Favicon (SVG data URL)
+    const favSvg = `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+        <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="52">🚛</text>
+      </svg>`;
+    const favDataSvg = 'data:image/svg+xml,' + encodeURIComponent(favSvg);
+
+    // Styles de la page autonome
+    const STYLES = `
+      :root{--primary:#0ea5e9;--primary-700:#0284c7;--bg:#f1f5f9;--card:#ffffff;--text:#0f172a;--sub:#475569;--border:#e2e8f0;--thead:#f8fafc;--accent:#16a34a}
+      html,body{background:var(--bg);color:var(--text);font-family:Arial,Helvetica,sans-serif;margin:0}
+      .titlebar{background:linear-gradient(90deg,var(--primary),#5eead4);color:#fff;padding:14px 16px;font-weight:700;letter-spacing:.2px;display:flex;align-items:center;gap:10px;font-size:16px;box-shadow:0 2px 12px rgba(2,132,199,.25)}
+      .wrap{padding:16px}
+      .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:0 2px 8px rgba(15,23,42,.04)}
+      .moisTitle{font-size:18px;margin-bottom:2px}
+      .meta{color:var(--sub);font-size:13px;margin:6px 0 10px}
+      .tableWrap{max-height:60vh;overflow:auto;border-radius:10px}
+      table.syn{width:100%;border-collapse:collapse;background:#fff}
+      table.syn th,table.syn td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:middle}
+      table.syn thead th{background:var(--thead);font-weight:700;user-select:none}
+      table.syn td.num{text-align:center;font-weight:600}
+      table.syn td.num.ok{color:var(--accent);font-weight:700}
+      tfoot tr.tfoot{position:sticky;bottom:0;background:#fff}
+      .badge{display:inline-block;padding:.15rem .5rem;border-radius:999px;font-size:12px;font-weight:600;line-height:1;border:1px solid transparent}
+      .badge-ponctuel{background:rgba(245,158,11,.12);color:#92400e;border-color:rgba(245,158,11,.3)}
+      .badge-regulier{background:rgba(59,130,246,.12);color:#1e40af;border-color:rgba(59,130,246,.3)}
+    `;
+
+    const fullHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>🚛 Synthèse – Transports mensuels</title>
+  <link rel="icon" type="image/svg+xml" sizes="any" href="${favDataSvg}">
+  <link rel="shortcut icon" type="image/svg+xml" href="${favDataSvg}">
+  <link rel="apple-touch-icon" href="${favDataSvg}">
+  <style>${STYLES}</style>
+</head>
+<body>
+  <div class="titlebar">🚛 Synthèse – Transports mensuels</div>
+  <div class="wrap"><div class="card"><div id="content">${document.getElementById('content').innerHTML}</div></div></div>
+
+  <!-- tri client-side -->
+  <script>(function(){var t=document.getElementById("synTable");if(!t)return;var ths=t.querySelectorAll("thead th");ths.forEach(function(th,i){th.addEventListener("click",function(){var dir=(th.dataset.dir==="asc")?-1:1;ths.forEach(h=>h.removeAttribute("data-dir"));th.setAttribute("data-dir",dir>0?"asc":"desc");var tbody=t.querySelector("tbody");var rows=[].slice.call(tbody.querySelectorAll("tr"));rows.sort(function(a,b){var A=a.children[i].textContent.trim();var B=b.children[i].textContent.trim();if(i===2){A=+A||0;B=+B||0;}return (A>B?1:A<B?-1:0)*dir;});rows.forEach(r=>tbody.appendChild(r));});});})();<\/script>
+
+  <!-- Fallback PNG (Safari/iOS) -->
+  <script>(function(){var c=document.createElement('canvas');c.width=c.height=64;var x=c.getContext('2d');x.font='52px "Apple Color Emoji","Segoe UI Emoji",sans-serif';x.textAlign='center';x.textBaseline='middle';x.fillText('🚛',32,36);var png=c.toDataURL('image/png');var l=document.createElement('link');l.rel='icon';l.type='image/png';l.href=png;document.head.appendChild(l);var a=document.createElement('link');a.rel='apple-touch-icon';a.href=png;document.head.appendChild(a);})();<\/script>
+</body>
+</html>`.trim();
+
+    // Ouvre via Blob URL (meilleure prise en compte du favicon)
+    const blob = new Blob([fullHtml], {type:'text/html'});
+    const url  = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  }
+
+  // --- Export PDF (serveur) ---
+  function exportPdf(){
+    const o = opts();
+    setBusy(true, 'Génération du PDF…');
+    google.script.run
+      .withSuccessHandler(({url}) => { setBusy(false); window.open(url, '_blank'); })
+      .withFailureHandler(err => { setBusy(false); alert('Erreur : ' + (err && err.message ? err.message : err)); })
+      .exportSynthesePdf(o);
+  }
+
+  // Évents
+  btnGen .addEventListener('click', generate);
+  btnOpen.addEventListener('click', openInBrowser);
+  btnPdf .addEventListener('click', exportPdf);
+  </script>
+
+</body>
+</html>
