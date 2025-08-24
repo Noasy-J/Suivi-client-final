@@ -27,7 +27,7 @@
     .btn-danger{background:var(--danger);color:#fff}
     .masked-item{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;margin-top:6px;border:1px solid var(--border);border-radius:8px}
     .empty{color:var(--muted);font-style:italic;margin-top:6px}
-    .card{max-width:600px;margin:0 auto;background:#fff;border:1px solid var(--border);border-radius:16px;padding:20px;box-shadow:0 10px 30px rgba(2,6,23,.08)}
+    .card{max-width:760px;margin:0 auto;background:#fff;border:1px solid var(--border);border-radius:16px;padding:20px;box-shadow:0 10px 30px rgba(2,6,23,.08)}
   </style>
 </head>
 <body>
@@ -41,8 +41,8 @@
     <input type="date" id="dateInput">
 
     <div class="actions">
-      <button type="button" class="btn-primary" onclick="maskByDate()">Masquer par date</button>
-      <button type="button" class="btn-alt" onclick="maskUntilNext()">Jusqu’à la prochaine intervention</button>
+      <button type="button" class="btn-primary" onclick="maskByDate(this)">Masquer par date</button>
+      <button type="button" class="btn-alt" onclick="maskUntilNext(this)">Jusqu’à la prochaine intervention</button>
     </div>
 
     <h3>Clients masqués</h3>
@@ -55,19 +55,21 @@
 
   <script>
     const $ = id => document.getElementById(id);
+    const setBusy = d => document.querySelectorAll('button').forEach(b => b.disabled = d);
 
-    function callServer(fnNames, args, onOk){
+    function callServer(fnNames, args, onOk, btn){
       if(!google || !google.script || !google.script.run){
         alert('google.script.run indisponible'); return;
       }
+      btn && (btn.disabled = true);
       const names = Array.isArray(fnNames)?fnNames:[fnNames];
       let i=0;
       const tryNext=()=>{
-        const name=names[i++]; if(!name){ alert('Fonction serveur introuvable'); return; }
+        const name=names[i++]; if(!name){ alert('Fonction serveur introuvable'); btn && (btn.disabled = false); return; }
         try{
           const r=google.script.run
-            .withSuccessHandler(res=>{ if(res && res.ok===false){ alert(res.message||'Erreur serveur'); return; } onOk && onOk(res); })
-            .withFailureHandler(err=>alert((err&&err.message)||'Erreur Apps Script'));
+            .withSuccessHandler(res=>{ btn && (btn.disabled = false); if(res && res.ok===false){ alert(res.message||'Erreur serveur'); return; } onOk && onOk(res); })
+            .withFailureHandler(err=>{ btn && (btn.disabled = false); alert((err&&err.message)||'Erreur Apps Script'); });
           args===undefined ? r[name]() : r[name](args);
         }catch(e){ tryNext(); }
       };
@@ -80,18 +82,18 @@
       list.forEach(c=>{ const o=document.createElement('option'); o.value=c.key; o.textContent=c.label; sel.appendChild(o); });
     }
 
-    function renderMaskedList(arr){
-      const cont=$('maskedList'); cont.innerHTML='';
-      if(!arr || !arr.length){ cont.innerHTML='<div class="empty">Aucun client masqué.</div>'; return; }
-      arr.forEach(m=>{
-        const div=document.createElement('div'); div.className='masked-item';
-        const span=document.createElement('span');
-        span.innerHTML='<b>'+m.label+'</b>'+(m.untilISO?' <small>(jusqu\u2019au '+m.untilISO+')</small>':'');
-        const btn=document.createElement('button'); btn.type='button'; btn.className='btn-danger'; btn.textContent='Démasquer';
-        btn.onclick=()=>callServer(['uiUnmaskClient_','uiUnmaskClient'], m.key, refreshUI);
-        div.appendChild(span); div.appendChild(btn); cont.appendChild(div);
-      });
-    }
+    function renderMaskedList(arr){␊
+      const cont=$('maskedList'); cont.innerHTML='';␊
+      if(!arr || !arr.length){ cont.innerHTML='<div class="empty">Aucun client masqué.</div>'; return; }␊
+      arr.forEach(m=>{␊
+        const div=document.createElement('div'); div.className='masked-item';␊
+        const span=document.createElement('span');␊
+        span.innerHTML='<b>'+m.label+'</b>'+(m.untilISO?' <small>(jusqu\u2019au '+m.untilISO+')</small>':'');␊
+        const btn=document.createElement('button'); btn.type='button'; btn.className='btn-danger'; btn.textContent='Démasquer';␊
+        btn.onclick=()=>{ setBusy(true); callServer(['uiUnmaskClient_','uiUnmaskClient'], m.key, ()=>refreshUI(()=>setBusy(false))); };
+        div.appendChild(span); div.appendChild(btn); cont.appendChild(div);␊
+      });␊
+    }␊
 
     function hydrate(){
       $('dateInput').min = new Date().toISOString().slice(0,10);
@@ -100,11 +102,12 @@
       renderMaskedList(INITIAL.masked);
     }
 
-    function refreshUI(){
+    function refreshUI(cb){
       $('dateInput').min = new Date().toISOString().slice(0,10);
       callServer(['uiListClientsPourMasquageV2_','uiListClientsPourMasquage_'], undefined, res=>{
         renderClientsDropdown(res.clients);
         renderMaskedList(res.masked);
+        cb && cb();
       });
     }
 
@@ -112,13 +115,15 @@
       const key=$('clientSelect').value, d=$('dateInput').value;
       if(!key) return alert('Sélectionnez un client');
       if(!d) return alert('Choisissez une date');
-      callServer(['uiMaskClient_','uiMaskClient'], {key,mode:'date',dateISO:d}, refreshUI);
+      setBusy(true);
+      callServer(['uiMaskClient_','uiMaskClient'], {key,mode:'date',dateISO:d}, ()=>refreshUI(()=>setBusy(false)));
     }
 
     function maskUntilNext(){
       const key=$('clientSelect').value;
       if(!key) return alert('Sélectionnez un client');
-      callServer(['uiMaskClient_','uiMaskClient'], {key,mode:'next'}, refreshUI);
+      setBusy(true);
+      callServer(['uiMaskClient_','uiMaskClient'], {key,mode:'next'}, ()=>refreshUI(()=>setBusy(false)));
     }
 
     document.addEventListener('DOMContentLoaded', hydrate);
