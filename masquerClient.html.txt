@@ -97,7 +97,13 @@
 
     function hydrate(){
       $('dateInput').min = new Date().toISOString().slice(0,10);
-      if(!INITIAL || INITIAL.ok===false){ alert((INITIAL && INITIAL.message)||'Erreur serveur'); return; }
+      if(!INITIAL || INITIAL.ok===false){
+        refreshUI();
+        if(INITIAL && INITIAL.ok===false){
+          alert(INITIAL.message || 'Erreur serveur');
+        }
+        return;
+      }
       renderClientsDropdown(INITIAL.clients);
       renderMaskedList(INITIAL.masked);
     }
