@@ -2,155 +2,126 @@
 <html>
 <head>
   <base target="_top">
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <style>
-    :root { --bg:#0f172a; --panel:#111827; --muted:#94a3b8; --text:#e5e7eb;
-            --primary:#60a5fa; --primary-2:#2563eb; --danger:#ef4444; --accent:#22d3ee; --chip:#1f2937; }
+    :root{
+      --primary:#3b82f6; --accent:#22d3ee; --danger:#dc2626;
+      --bg:#ffffff; --border:#e5e7eb; --text:#0f172a; --muted:#475569;
+    }
     *{box-sizing:border-box}
-    body{margin:0;padding:16px;background:linear-gradient(180deg,var(--bg),#020617);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial}
-    h2{margin:0 0 12px;font-size:20px;letter-spacing:.2px}
-    .card{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
-    .row{display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap}
-    label{color:var(--muted);min-width:160px}
-    select,input[type="date"]{background:#0b1020;color:var(--text);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:8px 10px;outline:none;min-width:280px}
-    button{background:var(--primary);color:#0b1020;border:none;border-radius:10px;padding:8px 12px;font-weight:600;cursor:pointer;transition:transform .05s ease, filter .15s ease}
-    button:hover{filter:brightness(1.1)} button:active{transform:translateY(1px)}
-    .btn-ghost{background:transparent;color:var(--primary);border:1px solid var(--primary)}
-    .btn-alt{background:var(--primary-2);color:white}
-    .btn-danger{background:var(--danger);color:white}
-    .sep{height:1px;background:rgba(255,255,255,.08);margin:12px 0}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-    .section h3{margin:0 0 10px;font-size:16px;color:var(--accent)}
-    .item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;margin:6px 0;background:var(--chip);border:1px solid rgba(255,255,255,.08);border-radius:10px}
-    .empty{color:var(--muted);font-style:italic}
-    .error{color:#fecaca;background:#7f1d1d;padding:8px 10px;border-radius:10px;border:1px solid #ef4444}
+    body{
+      margin:0;padding:16px;font:14px/1.4 Inter,Arial,sans-serif;
+      background:linear-gradient(180deg,#f1f5f9,#fff);color:var(--text);
+    }
+    h2{margin:0 0 16px;font-size:20px}
+    label{font-size:14px;color:var(--muted);display:block;margin:12px 0 4px}
+    select,input[type="date"]{
+      width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;
+      background:#fff;font-size:14px;outline:none;
+    }
+    select:focus,input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(59,130,246,.2)}
+    .actions{display:flex;gap:8px;margin:14px 0}
+    button{flex:1;padding:10px;border:none;border-radius:8px;font-weight:600;cursor:pointer}
+    .btn-primary{background:linear-gradient(135deg,var(--primary),var(--accent));color:#fff}
+    .btn-alt{background:#e0e7ff;color:#1e3a8a}
+    .btn-danger{background:var(--danger);color:#fff}
+    .masked-item{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;margin-top:6px;border:1px solid var(--border);border-radius:8px}
+    .empty{color:var(--muted);font-style:italic;margin-top:6px}
+    .card{max-width:600px;margin:0 auto;background:#fff;border:1px solid var(--border);border-radius:16px;padding:20px;box-shadow:0 10px 30px rgba(2,6,23,.08)}
   </style>
 </head>
 <body>
   <div class="card">
     <h2>Masquer un client</h2>
-    <div id="errorBox" class="error" style="display:none;"></div>
 
-    <div class="row">
-      <label>Client (feuille “Client Régulier”) :</label>
-      <select id="clientSelect"><option>Chargement…</option></select>
+    <label for="clientSelect">Client :</label>
+    <select id="clientSelect"><option>Chargement…</option></select>
+
+    <label for="dateInput">Masquer jusqu’au :</label>
+    <input type="date" id="dateInput">
+
+    <div class="actions">
+      <button type="button" class="btn-primary" onclick="maskByDate()">Masquer par date</button>
+      <button type="button" class="btn-alt" onclick="maskUntilNext()">Jusqu’à la prochaine intervention</button>
     </div>
 
-    <div class="row">
-      <label>Masquer jusqu’au :</label>
-      <input type="date" id="dateInput">
-      <button type="button" class="btn-alt"   onclick="maskByDate()">Masquer par date</button>
-      <button type="button" class="btn-ghost" onclick="maskUntilNext()">Jusqu’à la prochaine planification</button>
-    </div>
-
-    <div class="sep"></div>
-
-    <div class="grid">
-      <div class="section">
-        <h3>Clients masqués</h3>
-        <div id="maskedList"></div>
-      </div>
-      <div class="section">
-        <h3>Raccourcis</h3>
-        <div class="row"><button type="button" onclick="refreshUI()">🔄 Rafraîchir</button></div>
-        <div style="color:#9ca3af;font-size:13px">
-          La S+1 d’un client masqué est colorée <b>gris très foncé</b> quand les prévisions sont actives.
-        </div>
-      </div>
-    </div>
+    <h3>Clients masqués</h3>
+    <div id="maskedList"></div>
   </div>
 
-  <!-- Injection des données pré-calculées côté serveur -->
   <script>
-    const INITIAL = <?!= initialDataJson ?>; // objet {ok, clients, masked, ...}
+    const INITIAL = <?!= initialDataJson ?>; // {ok, clients, masked}
   </script>
 
   <script>
     const $ = id => document.getElementById(id);
 
-    function showError(msg){
-      const box = $('errorBox'); if(!box) return;
-      box.textContent = msg; box.style.display = 'block';
-    }
-    function clearError(){ const b=$('errorBox'); if(b) b.style.display='none'; }
-
-    // Appel serveur robuste : teste plusieurs noms de fonctions (underscore / sans underscore)
     function callServer(fnNames, args, onOk){
-      if (!window.google || !google.script || !google.script.run) {
-        showError('google.script.run indisponible dans cette fenêtre.'); return;
+      if(!google || !google.script || !google.script.run){
+        alert('google.script.run indisponible'); return;
       }
-      const names = Array.isArray(fnNames) ? fnNames : [fnNames];
-      let i = 0;
-      const tryNext = () => {
-        const name = names[i++]; if (!name) { showError('Aucune fonction serveur trouvée.'); return; }
-        try {
-          const runner = google.script.run
-            .withSuccessHandler(res => {
-              if (res && res.ok === false) { showError(res.message || 'Erreur serveur.'); return; }
-              clearError(); onOk && onOk(res);
-            })
-            .withFailureHandler(err => { showError((err && err.message) || 'Erreur Apps Script.'); });
-          if (args === undefined) runner[name](); else runner[name](args);
-        } catch(e) { tryNext(); }
+      const names = Array.isArray(fnNames)?fnNames:[fnNames];
+      let i=0;
+      const tryNext=()=>{
+        const name=names[i++]; if(!name){ alert('Fonction serveur introuvable'); return; }
+        try{
+          const r=google.script.run
+            .withSuccessHandler(res=>{ if(res && res.ok===false){ alert(res.message||'Erreur serveur'); return; } onOk && onOk(res); })
+            .withFailureHandler(err=>alert((err&&err.message)||'Erreur Apps Script'));
+          args===undefined ? r[name]() : r[name](args);
+        }catch(e){ tryNext(); }
       };
       tryNext();
     }
 
-    function renderClientsDropdown(list) {
-      const sel = $('clientSelect'); sel.innerHTML = '';
-      if (!list || !list.length) {
-        const o = document.createElement('option'); o.value=''; o.textContent='— Aucun client (Client Régulier) —';
-        sel.appendChild(o); return;
-      }
-      list.forEach(c => { const o=document.createElement('option'); o.value=c.key; o.textContent=c.label; sel.appendChild(o); });
+    function renderClientsDropdown(list){
+      const sel=$('clientSelect'); sel.innerHTML='';
+      if(!list || !list.length){ const o=document.createElement('option'); o.value=''; o.textContent='— Aucun client —'; sel.appendChild(o); return; }
+      list.forEach(c=>{ const o=document.createElement('option'); o.value=c.key; o.textContent=c.label; sel.appendChild(o); });
     }
 
-    function renderMaskedList(arr) {
-      const cont = $('maskedList'); cont.innerHTML = '';
-      if (!arr || !arr.length) { cont.innerHTML = '<div class="empty">Aucun client masqué.</div>'; return; }
-      arr.forEach(m => {
-        const div=document.createElement('div'); div.className='item';
-        const left=document.createElement('div');
-        left.innerHTML = '<b>'+m.label+'</b>' + (m.untilISO ? ' <small>(jusqu’au '+m.untilISO+')</small>' : '');
+    function renderMaskedList(arr){
+      const cont=$('maskedList'); cont.innerHTML='';
+      if(!arr || !arr.length){ cont.innerHTML='<div class="empty">Aucun client masqué.</div>'; return; }
+      arr.forEach(m=>{
+        const div=document.createElement('div'); div.className='masked-item';
+        const span=document.createElement('span');
+        span.innerHTML='<b>'+m.label+'</b>'+(m.untilISO?' <small>(jusqu\u2019au '+m.untilISO+')</small>':'');
         const btn=document.createElement('button'); btn.type='button'; btn.className='btn-danger'; btn.textContent='Démasquer';
-        btn.onclick = () => callServer(['uiUnmaskClient_','uiUnmaskClient'], m.key, () => refreshUI());
-        div.appendChild(left); div.appendChild(btn); cont.appendChild(div);
+        btn.onclick=()=>callServer(['uiUnmaskClient_','uiUnmaskClient'], m.key, refreshUI);
+        div.appendChild(span); div.appendChild(btn); cont.appendChild(div);
       });
     }
 
-    function hydrateFromInitial() {
-      $('dateInput').setAttribute('min', new Date().toISOString().slice(0,10));
-      if (!INITIAL || INITIAL.ok === false) { showError((INITIAL && INITIAL.message) || 'Erreur serveur.'); return; }
-      clearError();
+    function hydrate(){
+      $('dateInput').min = new Date().toISOString().slice(0,10);
+      if(!INITIAL || INITIAL.ok===false){ alert((INITIAL && INITIAL.message)||'Erreur serveur'); return; }
       renderClientsDropdown(INITIAL.clients);
       renderMaskedList(INITIAL.masked);
     }
 
-    function refreshUI() {
-      $('dateInput').setAttribute('min', new Date().toISOString().slice(0,10));
-      callServer(['uiListClientsPourMasquageV2_','uiListClientsPourMasquage_'], undefined, (res) => {
+    function refreshUI(){
+      $('dateInput').min = new Date().toISOString().slice(0,10);
+      callServer(['uiListClientsPourMasquageV2_','uiListClientsPourMasquage_'], undefined, res=>{
         renderClientsDropdown(res.clients);
         renderMaskedList(res.masked);
       });
     }
 
-    function maskByDate() {
-      const key = $('clientSelect').value, d = $('dateInput').value;
-      if (!key) return alert('Sélectionnez un client.');
-      if (!d)   return alert('Choisissez une date.');
-      callServer(['uiMaskClient_','uiMaskClient'], { key, mode:'date', dateISO:d }, () => refreshUI());
+    function maskByDate(){
+      const key=$('clientSelect').value, d=$('dateInput').value;
+      if(!key) return alert('Sélectionnez un client');
+      if(!d) return alert('Choisissez une date');
+      callServer(['uiMaskClient_','uiMaskClient'], {key,mode:'date',dateISO:d}, refreshUI);
     }
 
-    function maskUntilNext() {
-      const key = $('clientSelect').value;
-      if (!key) return alert('Sélectionnez un client.');
-      callServer(['uiMaskClient_','uiMaskClient'], { key, mode:'next' }, () => refreshUI());
+    function maskUntilNext(){
+      const key=$('clientSelect').value;
+      if(!key) return alert('Sélectionnez un client');
+      callServer(['uiMaskClient_','uiMaskClient'], {key,mode:'next'}, refreshUI);
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
-      hydrateFromInitial(); // affichage instantané
-      // refreshUI();       // décommente si tu veux recharger côté serveur dès l’ouverture
-    });
+    document.addEventListener('DOMContentLoaded', hydrate);
   </script>
 </body>
 </html>
