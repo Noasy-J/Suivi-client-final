@@ -36,12 +36,14 @@ const FORECAST_BG_OK     = '#FFE8C6'; // dans le délai (orange clair)
 const FORECAST_BG        = '#FF5252'; // retard 1 semaine (rouge)
 const FORECAST_BG_URGENT = '#5C0000'; // retard ≥ 2 semaines (rouge très foncé)
 const FORECAST_BG_NEW    = '#9CCAFF'; // ➕ nouveau client (aucune intervention passée) — BLEU
+const MASKED_BG          = '#1F2937'; // S+1 masqué (gris très foncé)
 
 // Propriétés (clé/val docs)
 const PROP_WEEK_BORDER_COLS_PREFIX = 'WEEK_BORDER_COLS_';
 const PROP_FORECAST_ENABLED        = 'FORECAST_ENABLED';      // '1' ou '0'
 const PROP_FORECAST_PACKS_PREFIX   = 'FORECAST_PACKS_';       // par sheetId
 const PROP_WEEK_LAST_ROWS_PREFIX = 'WEEK_LAST_ROWS_';
+const PROP_MASKED_CLIENTS        = 'MASKED_CLIENTS';          // JSON map des clients masqués
 
 // Alias lisibles (pas d’impact fonctionnel)
 const FIRST_DATA_ROW = 3;        // lignes 1..2 = en-têtes ; données à partir de 3
@@ -83,8 +85,25 @@ const __PLAGES_CACHE = new Map();
 
 
 /************
+  Masquages – persistance
+*************/
+function loadMaskedClients_() {
+  try {
+    const raw = PropertiesService.getDocumentProperties().getProperty(PROP_MASKED_CLIENTS);
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) { return {}; }
+}
+function saveMaskedClients_(obj) {
+  try {
+    PropertiesService.getDocumentProperties().setProperty(PROP_MASKED_CLIENTS, JSON.stringify(obj || {}));
+  } catch (_) {}
+}
+
+
+/************
   Batch de surbrillance (déféré)
 *************/
+
 
 let __HL_DEFER = false;
 let __HL_BUCKET = null;
@@ -223,11 +242,12 @@ function onOpen(e) {
         .addItem('Supprimer un client ❌', 'supprimerClientDialog')
         .addToUi();
 
-      // 2) Prévisions 🔮 (— plus de sous-menu Masquages —)
+      // 2) Prévisions 🔮
       ui.createMenu('Prévisions 🔮')
         .addItem('Activer les prévisions ✅', 'activerPrevisionsMenu_')
         .addItem('Désactiver les prévisions ❌​', 'desactiverPrevisionsMenu_')
         .addItem('Listing téléphonique (priorisé) 📞', 'ouvrirListingPrevisionsDialog')
+        .addItem('Masquer/Démasquer un client 🙈', 'masquerClientDialog')
         .addToUi();
 
       // 3) Cloture 🧾
@@ -1026,8 +1046,80 @@ function supprimerClientTous(fullName) {
   } finally {
     try { endHighlightBatch_(); } catch(_) {}
     try { lock.releaseLock(); } catch(_) {}
-  }
+ }
 }
+
+
+/************
+  Masquage de clients
+*************/
+
+function masquerClientDialog() {
+  const ui = SpreadsheetApp.getUi();
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(100)) { ui.alert('Veuillez patienter 2–3 secondes et réessayer.'); return; }
+  try {
+    const tpl = HtmlService.createTemplateFromFile('masquerClient');
+    tpl.initialDataJson = JSON.stringify(uiListClientsPourMasquageV2_());
+    const html = tpl.evaluate().setWidth(600).setHeight(420);
+    ui.showModalDialog(html, 'Masquer un client 🙈');
+  } finally { try { lock.releaseLock(); } catch (_) {} }
+}
+
+function uiListClientsPourMasquageV2_() {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_CLIENTS);
+  const masked = loadMaskedClients_();
+  const clients = [];
+  if (sh) {
+    const lastRow = sh.getLastRow();
+    if (lastRow >= FIRST_DATA_ROW) {
+      const vals = sh.getRange(FIRST_DATA_ROW, 1, lastRow - (FIRST_DATA_ROW - 1), 2).getDisplayValues();
+      for (let i = 0; i < vals.length; i += NB_ROWS_BLOCK) {
+        const nom = (vals[i][0] || '').trim();
+        const prenom = (vals[i+1] && vals[i+1][0]) ? vals[i+1][0].trim() : '';
+        if (!nom) continue;
+        const full = prenom ? `${nom} ${prenom}` : nom;
+        if (!masked[full]) clients.push({ key: full, label: full });
+      }
+    }
+  }
+  const maskedArr = Object.keys(masked).map(k => ({ key: k, label: k, untilISO: masked[k].mode === 'date' ? masked[k].until : null }));
+  maskedArr.sort((a,b)=>a.label.localeCompare(b.label));
+  return { ok: true, clients, masked: maskedArr };
+}
+function uiListClientsPourMasquage_() { return uiListClientsPourMasquageV2_(); }
+
+function uiMaskClient_(p) {
+  const key  = p && p.key ? String(p.key).trim() : '';
+  const mode = p && p.mode;
+  if (!key) return { ok:false, message:'Client invalide' };
+  const masked = loadMaskedClients_();
+  if (mode === 'date') {
+    const dateISO = p.dateISO;
+    if (!dateISO) return { ok:false, message:'Date manquante' };
+    masked[key] = { mode:'date', until: dateISO };
+  } else if (mode === 'next') {
+    masked[key] = { mode:'next' };
+  } else {
+    return { ok:false, message:'Mode invalide' };
+  }
+  saveMaskedClients_(masked);
+  const sh = SpreadsheetApp.getActive().getSheetByName(SHEET_CLIENTS);
+  if (sh) resurlignerApresMaj_(sh);
+  return { ok:true };
+}
+function uiMaskClient(p){ return uiMaskClient_(p); }
+
+function uiUnmaskClient_(key) {
+  key = key ? String(key).trim() : '';
+  const masked = loadMaskedClients_();
+  if (masked[key]) { delete masked[key]; saveMaskedClients_(masked); }
+  const sh = SpreadsheetApp.getActive().getSheetByName(SHEET_CLIENTS);
+  if (sh) resurlignerApresMaj_(sh);
+  return { ok:true };
+}
+function uiUnmaskClient(key){ return uiUnmaskClient_(key); }
+
 
 
 /************
@@ -2711,19 +2803,54 @@ function appliquerPrevisionsSurFeuille_(sheet) {
     [FORECAST_BG,         []],
     [FORECAST_BG_OK,      []]
   ]);
+  const paintMasked = [];
   const packs = [];
+  const masked = loadMaskedClients_();
+  let maskedChanged = false;
 
   for (let r1rel = 0; r1rel < height; r1rel += NB_ROWS_BLOCK) {
     const r2rel = r1rel + 1; if (r2rel >= height) break;
     const r1Abs = FIRST_DATA_ROW + r1rel;
 
-    const contrat = (ABdisp[r1rel][COL_CONTRAT - 1] || '').trim();
+   const contrat = (ABdisp[r1rel][COL_CONTRAT - 1] || '').trim();
     const freq = getFrequenceFromContrat_(contrat);
     if (!freq) continue;
+
+    const nom    = (ABdisp[r1rel][COL_NOM - 1] || '').trim();
+    const prenom = (ABdisp[r2rel][COL_PRENOM - 1] || '').trim();
+    const full   = prenom ? `${nom} ${prenom}` : nom;
 
     const row1Vals = rowValsAll[r1rel];
     const row1Disp = rowDispAll[r1rel];
     const row2Disp = rowDispAll[r2rel];
+
+    // Masquage
+    let isMasked = false;
+    const mInfo = masked[full];
+    if (mInfo) {
+      if (mInfo.mode === 'date') {
+        const until = mInfo.until ? new Date(mInfo.until) : null;
+        if (until && todayMidnight_() <= until) {
+          isMasked = true;
+        } else {
+          delete masked[full];
+          maskedChanged = true;
+        }
+      } else if (mInfo.mode === 'next') {
+        const hasFuturePlanif = hasPlanifFromIndex_(row1Disp, row2Disp, jS1);
+        if (!hasFuturePlanif) {
+          isMasked = true;
+        } else {
+          delete masked[full];
+          maskedChanged = true;
+        }
+      }
+    }
+    if (isMasked) {
+      paintMasked.push(sheet.getRange(r1Abs, startCol, NB_ROWS_BLOCK, 1).getA1Notation());
+      packs.push({ r1: r1Abs, c1: startCol, c2: startCol });
+      continue;
+    }
 
     // S+1 déjà rempli → pas de surbrillance
     const filledS1 = (String(row1Disp[jS1] || '').trim() !== '' || String(row2Disp[jS1] || '').trim() !== '');
@@ -2765,15 +2892,19 @@ function appliquerPrevisionsSurFeuille_(sheet) {
     packs.push({ r1: r1Abs, c1: startCol, c2: startCol });
   }
 
+ __applyColorBatches_(sheet, paintMasked,                      MASKED_BG);
   __applyColorBatches_(sheet, paintByColor.get(FORECAST_BG_NEW),     FORECAST_BG_NEW);
   __applyColorBatches_(sheet, paintByColor.get(FORECAST_BG_URGENT),  FORECAST_BG_URGENT);
   __applyColorBatches_(sheet, paintByColor.get(FORECAST_BG),         FORECAST_BG);
   __applyColorBatches_(sheet, paintByColor.get(FORECAST_BG_OK),      FORECAST_BG_OK);
 
+  if (maskedChanged) saveMaskedClients_(masked);
+
   storeForecastPacks_(sheet, packs);
   SpreadsheetApp.flush();
   return 0;
 }
+
 
 
 
@@ -3202,7 +3333,7 @@ function getListingPrevisionsData_() {
     'Non prioritaire': []
   };
 
-  const sheet = ss.getSheetByName(SHEET_CLIENTS);
+ const sheet = ss.getSheetByName(SHEET_CLIENTS);
   if (!sheet) return { groups, total: 0 };
 
   const lastRow = sheet.getLastRow();
@@ -3235,6 +3366,9 @@ function getListingPrevisionsData_() {
     });
   };
 
+ const masked = loadMaskedClients_();
+  let maskedChanged = false;
+
   for (let r1rel = 0; r1rel < height; r1rel += NB_ROWS_BLOCK) {
     const r2rel = r1rel + 1; if (r2rel >= height) break;
 
@@ -3251,6 +3385,22 @@ function getListingPrevisionsData_() {
     const row1Vals = rowValsAll[r1rel];
     const row1Disp = rowDispAll[r1rel];
     const row2Disp = rowDispAll[r2rel];
+
+    const full = prenom ? `${nom} ${prenom}` : nom;
+    const mInfo = masked[full];
+    if (mInfo) {
+      let keepMasked = false;
+      if (mInfo.mode === 'date') {
+        const until = mInfo.until ? new Date(mInfo.until) : null;
+        keepMasked = !!(until && todayMidnight_() <= until);
+      } else if (mInfo.mode === 'next') {
+        keepMasked = !hasPlanifFromIndex_(row1Disp, row2Disp, jS1);
+      }
+      if (keepMasked) continue;
+      delete masked[full];
+      maskedChanged = true;
+    }
+
 
     // Détecte une planification FUTURE (info complémentaire)
     let nextPlanifDate = null;
@@ -3312,7 +3462,7 @@ function getListingPrevisionsData_() {
     });
   }
 
-  // Tri par rang puis A→Z
+  // Tri par rang puis A→Z␊
   Object.keys(groups).forEach(k => {
     groups[k].sort((a, b) =>
       (a.rank - b.rank) ||
@@ -3322,8 +3472,10 @@ function getListingPrevisionsData_() {
   });
 
   const total = Object.values(groups).reduce((acc, arr) => acc + arr.length, 0);
+  if (maskedChanged) saveMaskedClients_(masked);
   return { groups, total };
 }
+
 
 
 
