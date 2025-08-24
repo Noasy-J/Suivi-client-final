@@ -92,6 +92,8 @@
         const btn=document.createElement('button'); btn.type='button'; btn.className='btn-danger'; btn.textContent='Démasquer';
         btn.onclick=()=>{ setBusy(true); callServer(['uiUnmaskClient_','uiUnmaskClient'], m.key, ()=>refreshUI(()=>setBusy(false))); };
         div.appendChild(span); div.appendChild(btn); cont.appendChild(div);
+      });
+    }
 
     function hydrate(){
       $('dateInput').min = new Date().toISOString().slice(0,10);
