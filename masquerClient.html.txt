@@ -35,9 +35,9 @@
     <h2>Masquer un client</h2>
 
     <label for="clientSelect">Client :</label>
-    <select id="clientSelect"><option>Chargement…</option></select>
+    <select id="clientSelect"><option>Chargement</option></select>
 
-    <label for="dateInput">Masquer jusqu’au :</label>
+<label for="dateInput">Masquer jusqu'au :</label>
     <input type="date" id="dateInput">
 
     <div class="actions">
@@ -78,22 +78,20 @@
 
     function renderClientsDropdown(list){
       const sel=$('clientSelect'); sel.innerHTML='';
-      if(!list || !list.length){ const o=document.createElement('option'); o.value=''; o.textContent='— Aucun client —'; sel.appendChild(o); return; }
+       if(!list || !list.length){ const o=document.createElement('option'); o.value=''; o.textContent=' Aucun client '; sel.appendChild(o); return; }
       list.forEach(c=>{ const o=document.createElement('option'); o.value=c.key; o.textContent=c.label; sel.appendChild(o); });
     }
 
-    function renderMaskedList(arr){␊
-      const cont=$('maskedList'); cont.innerHTML='';␊
-      if(!arr || !arr.length){ cont.innerHTML='<div class="empty">Aucun client masqué.</div>'; return; }␊
-      arr.forEach(m=>{␊
-        const div=document.createElement('div'); div.className='masked-item';␊
-        const span=document.createElement('span');␊
-        span.innerHTML='<b>'+m.label+'</b>'+(m.untilISO?' <small>(jusqu\u2019au '+m.untilISO+')</small>':'');␊
-        const btn=document.createElement('button'); btn.type='button'; btn.className='btn-danger'; btn.textContent='Démasquer';␊
+    function renderMaskedList(arr){
+      const cont=$('maskedList'); cont.innerHTML='';
+      if(!arr || !arr.length){ cont.innerHTML='<div class="empty">Aucun client masqué.</div>'; return; }
+      arr.forEach(m=>{
+        const div=document.createElement('div'); div.className='masked-item';
+        const span=document.createElement('span');
+        span.innerHTML='<b>'+m.label+'</b>'+(m.untilISO?' <small>(jusqu\u2019au '+m.untilISO+')</small>':'');
+        const btn=document.createElement('button'); btn.type='button'; btn.className='btn-danger'; btn.textContent='Démasquer';
         btn.onclick=()=>{ setBusy(true); callServer(['uiUnmaskClient_','uiUnmaskClient'], m.key, ()=>refreshUI(()=>setBusy(false))); };
-        div.appendChild(span); div.appendChild(btn); cont.appendChild(div);␊
-      });␊
-    }␊
+        div.appendChild(span); div.appendChild(btn); cont.appendChild(div);
 
     function hydrate(){
       $('dateInput').min = new Date().toISOString().slice(0,10);
@@ -108,7 +106,7 @@
       renderMaskedList(INITIAL.masked);
     }
 
-    function refreshUI(cb){
+   function refreshUI(cb){
       $('dateInput').min = new Date().toISOString().slice(0,10);
       callServer(['uiListClientsPourMasquageV2_','uiListClientsPourMasquage_'], undefined, res=>{
         renderClientsDropdown(res.clients);
@@ -117,19 +115,43 @@
       });
     }
 
+    function applyMaskLocally(key,label,untilISO){
+      if(INITIAL){
+        if(Array.isArray(INITIAL.clients)){
+          INITIAL.clients = INITIAL.clients.filter(c=>c.key!==key);
+        }
+        if(Array.isArray(INITIAL.masked)){
+          INITIAL.masked.push({key,label,untilISO});
+          INITIAL.masked.sort((a,b)=>a.label.localeCompare(b.label));
+        }
+      }
+      renderClientsDropdown(INITIAL&&INITIAL.clients);
+      renderMaskedList(INITIAL&&INITIAL.masked);
+    }
+
     function maskByDate(){
-      const key=$('clientSelect').value, d=$('dateInput').value;
+      const sel=$('clientSelect'), key=sel.value, d=$('dateInput').value;
       if(!key) return alert('Sélectionnez un client');
       if(!d) return alert('Choisissez une date');
+      const label=sel.options[sel.selectedIndex].textContent;
       setBusy(true);
-      callServer(['uiMaskClient_','uiMaskClient'], {key,mode:'date',dateISO:d}, ()=>refreshUI(()=>setBusy(false)));
+      callServer(['uiMaskClient_','uiMaskClient'], {key,mode:'date',dateISO:d}, ()=>{
+        applyMaskLocally(key,label,d);
+        $('dateInput').value='';
+        setBusy(false);
+      });
     }
 
     function maskUntilNext(){
-      const key=$('clientSelect').value;
+      const sel=$('clientSelect');
+      const key=sel.value;
       if(!key) return alert('Sélectionnez un client');
+      const label=sel.options[sel.selectedIndex].textContent;
       setBusy(true);
-      callServer(['uiMaskClient_','uiMaskClient'], {key,mode:'next'}, ()=>refreshUI(()=>setBusy(false)));
+      callServer(['uiMaskClient_','uiMaskClient'], {key,mode:'next'}, ()=>{
+        applyMaskLocally(key,label,null);
+        setBusy(false);
+      });
     }
 
     document.addEventListener('DOMContentLoaded', hydrate);
